@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    // L'amministratore: unico che modifica roster e convocati
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'nicola.vacca@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Elenco giocatori: lo leggono tutti gli utenti entrati, lo modifica solo l'admin
+    match /players/{playerId} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80;
+      allow delete: if isAdmin();
+    }
+
+    // Convocati della settimana: li leggono tutti, li sceglie solo l'admin
+    match /week/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Voti: un documento per persona. Tutti leggono (per le medie),
+    // ognuno scrive solo il proprio.
+    match /votes/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['ratings', 'updatedAt'])
+        && request.resource.data.ratings is map
+        && request.resource.data.ratings.size() <= 300;
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    // Tutto il resto è chiuso
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
