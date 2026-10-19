@@ -60,7 +60,7 @@ const S = {
   players: [], my: {}, dirty: false, saving: false, saveTimer: null,
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
-  sel: [], played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
+  sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "", resetText: "",
   failed: "", loginErr: "",
   unsubs: [], adminUnsubs: [], fvUnsub: null, fvMatch: null
@@ -287,42 +287,71 @@ function playerAverages() {
 */
 const ROLE_GATE = 0.25;
 const TOP_PER_ROLE = 2;
+const r1 = x => Math.round(x * 10) / 10;
+const score01 = x => Math.max(0, Math.round(100 * (1 - x)));
 
-function generate(sel, avg) {
-  const n = sel.length, h = n / 2, K = SKILLS.length;
-  const vals = sel.map(pid => (avg[pid] || []).map(a => a == null ? FALLBACK : a).concat(Array(K).fill(FALLBACK)).slice(0, K));
-  const totAll = SKILLS.map((_, j) => vals.reduce((s, v) => s + v[j], 0));
-  const top = Math.min(TOP_PER_ROLE, h);
-  const res = [], idx = [0];
-  const evalSplit = () => {
-    const inA = new Array(n).fill(false); idx.forEach(i => inA[i] = true);
-    const sA = SKILLS.map((_, j) => idx.reduce((s, i) => s + vals[i][j], 0));
-    const mA = sA.map(v => v / h), mB = sA.map((v, j) => (totAll[j] - v) / h);
-    const dS = mA.map((v, j) => Math.abs(v - mB[j]));
-    const gA = mA.reduce((a, b) => a + b, 0) / K, gB = mB.reduce((a, b) => a + b, 0) / K;
-    const dG = Math.abs(gA - gB);
-    const dAvg = dS.reduce((a, b) => a + b, 0) / K;
-    const dMax = Math.max(...dS);
-    const cost = 0.4 * dG + 0.4 * dAvg + 0.2 * dMax;
-    // squilibrio dei ruoli
-    let role = 0;
-    for (let j = 0; j < K; j++) {
-      const a = [], b = [];
-      for (let i = 0; i < n; i++) (inA[i] ? a : b).push(vals[i][j]);
-      a.sort((x, y) => y - x); b.sort((x, y) => y - x);
-      let g = 0;
-      for (let t = 0; t < top; t++) g += Math.abs(a[t] - b[t]);
-      role += g / top;
-    }
-    role /= K;
-    res.push({ a: idx.slice(), cost, role, dG, mA, mB, gA, gB });
+// Valori di un giocatore (con FALLBACK dove manca il voto)
+function playerVals(avg, pid) {
+  const K = SKILLS.length;
+  return (avg[pid] || []).map(a => a == null ? FALLBACK : a).concat(Array(K).fill(FALLBACK)).slice(0, K);
+}
+
+// Statistiche di una divisione qualsiasi (anche squadre di dimensioni diverse)
+function evaluate(Aids, Bids, avg) {
+  const K = SKILLS.length;
+  const va = Aids.map(id => playerVals(avg, id)), vb = Bids.map(id => playerVals(avg, id));
+  const mean = (vs, j) => vs.length ? vs.reduce((s, v) => s + v[j], 0) / vs.length : 0;
+  const mA = SKILLS.map((_, j) => mean(va, j)), mB = SKILLS.map((_, j) => mean(vb, j));
+  const dS = mA.map((v, j) => Math.abs(v - mB[j]));
+  const gA = mA.reduce((x, y) => x + y, 0) / K, gB = mB.reduce((x, y) => x + y, 0) / K;
+  const dG = Math.abs(gA - gB);
+  const cost = 0.4 * dG + 0.4 * (dS.reduce((x, y) => x + y, 0) / K) + 0.2 * Math.max(...dS);
+  const top = Math.max(1, Math.min(TOP_PER_ROLE, va.length, vb.length));
+  let role = 0;
+  for (let j = 0; j < K; j++) {
+    const sa = va.map(v => v[j]).sort((x, y) => y - x), sb = vb.map(v => v[j]).sort((x, y) => y - x);
+    let g = 0;
+    for (let t = 0; t < top; t++) g += Math.abs((sa[t] ?? 0) - (sb[t] ?? 0));
+    role += g / top;
+  }
+  role /= K;
+  return { mA, mB, gA, gB, dG, cost, role };
+}
+
+// Formazione nel formato pubblicato (solo medie di squadra arrotondate)
+function toFormation(Aids, Bids, avg) {
+  const e = evaluate(Aids, Bids, avg);
+  const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, r1(m[j])]));
+  return {
+    A: sortIdsByName(Aids), B: sortIdsByName(Bids),
+    sA: statsOf(e.mA), sB: statsOf(e.mB), gA: r1(e.gA), gB: r1(e.gB),
+    req: score01(e.role), eq: score01(e.cost),
+    _role: e.role, _cost: e.cost
   };
+}
+
+/*
+  Criterio di formazione delle squadre
+  1. Vincolo: si scartano le divisioni con differenza di media generale > ROLE_GATE
+     (la soglia si allarga di 0,05 se restano meno di PUBLISHED divisioni).
+  2. Criterio principale, ruoli: per ogni skill si confrontano i due migliori di A
+     con i due migliori di B (1° con 1°, 2° con 2°).
+  3. Spareggio: 0,4 × Δ media globale + 0,4 × Δ medio skill + 0,2 × Δ skill più sbilanciata.
+  Restituisce le PUBLISHED divisioni migliori come coppie di elenchi di id.
+*/
+function generate(sel, avg) {
+  const n = sel.length, h = n / 2;
+  const res = [], idx = [0];
   const rec = start => {
-    if (idx.length === h) { evalSplit(); return; }
+    if (idx.length === h) {
+      const set = new Set(idx);
+      const A = idx.map(i => sel[i]), B = sel.filter((_, i) => !set.has(i));
+      res.push({ A, B, ...evaluate(A, B, avg) });
+      return;
+    }
     for (let i = start; i <= n - (h - idx.length); i++) { idx.push(i); rec(i + 1); idx.pop(); }
   };
   rec(1);
-  // vincolo di equilibrio generale, con soglia che si allarga se servono più candidati
   let gate = ROLE_GATE, pool = [];
   const want = Math.min(PUBLISHED, res.length);
   while (true) {
@@ -330,38 +359,53 @@ function generate(sel, avg) {
     if (pool.length >= want || gate > 5) break;
     gate += 0.05;
   }
-  const key = x => Math.round(x * 100) / 100;     // ruoli quasi uguali = pari, decide l'equilibrio generale
-  pool.sort((x, y) => key(x.role) - key(y.role) || x.cost - y.cost || x.dG - y.dG);
-  const r1 = x => Math.round(x * 10) / 10;
-  const score = x => Math.max(0, Math.round(100 * (1 - x)));
-  return pool.slice(0, PUBLISHED).map(r => {
-    const set = new Set(r.a);
-    const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, r1(m[j])]));
-    return {
-      A: sortIdsByName(r.a.map(i => sel[i])),
-      B: sortIdsByName(sel.filter((_, i) => !set.has(i))),
-      sA: statsOf(r.mA), sB: statsOf(r.mB),
-      gA: r1(r.gA), gB: r1(r.gB),
-      req: score(r.role),          // equilibrio ruoli
-      eq: score(r.cost)            // equilibrio generale
-    };
-  });
+  pool.sort(rankCmp);
+  return pool.slice(0, PUBLISHED).map(r => ({ A: r.A, B: r.B }));
+}
+const rk = x => Math.round(x * 100) / 100;    // ruoli quasi uguali = pari
+function rankCmp(x, y) {
+  const xr = x.role ?? x._role, yr = y.role ?? y._role, xc = x.cost ?? x._cost, yc = y.cost ?? y._cost;
+  return rk(xr) - rk(yr) || xc - yc;
 }
 
-async function publishMatch() {
+/* ---------- Bozza modificabile (solo nel browser dell'amministratore) ---------- */
+async function makeDraft() {
   const sel = S.sel.filter(id => S.players.some(p => p.id === id));
   if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) return;
   S.busy = true; render();
   try {
     const snap = await getDocs(collection(db, "votes"));   // dati freschi
     S.votes = new Map(snap.docs.map(d => [d.id, d.data()]));
-    const formations = generate(sel, playerAverages());
+    const avg = playerAverages();
+    const items = generate(sel, avg).map(f => ({ A: f.A.slice(), B: f.B.slice(), oA: f.A.slice(), oB: f.B.slice() }));
+    S.draft = { sel, avg, items };
+    flash("Proposte pronte: sistemale e poi pubblicale.", "ok");
+  } catch (e) { flash("Calcolo non riuscito: " + (e.code || "errore"), "warn"); }
+  S.busy = false; render();
+}
+function draftMove(i, pid) {
+  const it = S.draft && S.draft.items[i]; if (!it) return;
+  if (it.A.includes(pid)) { it.A = it.A.filter(x => x !== pid); it.B.push(pid); }
+  else if (it.B.includes(pid)) { it.B = it.B.filter(x => x !== pid); it.A.push(pid); }
+  render();
+}
+function draftReset(i) { const it = S.draft.items[i]; it.A = it.oA.slice(); it.B = it.oB.slice(); render(); }
+function draftDrop(i) { S.draft.items.splice(i, 1); S.confirm = null; render(); }
+const draftValid = () => S.draft && S.draft.items.length >= 1 && S.draft.items.every(it => it.A.length === it.B.length && it.A.length > 0);
+
+async function publishMatch() {
+  if (!draftValid()) return;
+  S.busy = true; render();
+  try {
+    const { sel, avg, items } = S.draft;
+    const formations = items.map(it => toFormation(it.A, it.B, avg)).sort(rankCmp)
+      .map(({ _role, _cost, ...f }) => f);
     const ref = doc(collection(db, "matches"));
     const b = writeBatch(db);
     b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
     b.set(doc(db, "config", "state"), { currentMatch: ref.id, updatedAt: Date.now() });
     await b.commit();
-    S.sel = []; S.played = null; S.winner = null;
+    S.sel = []; S.draft = null; S.played = null; S.winner = null;
     flash("Formazioni pubblicate: ora i giocatori possono votarle.", "ok");
   } catch (e) { flash("Pubblicazione non riuscita: " + (e.code || "errore"), "warn"); }
   S.busy = false; render();
@@ -539,7 +583,7 @@ const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
   formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
   classifica: "Ogni partita vinta vale 2 punti, ogni partita persa 1 punto.",
-  partita: "Scegli i convocati e pubblica le formazioni. Dopo la partita inserisci le formazioni definitive e la squadra vincitrice.",
+  partita: "Scegli i convocati, genera le proposte, sistemale e pubblicale. Dopo la partita inserisci le formazioni definitive e la squadra vincitrice.",
   roster: "Aggiungi, rinomina o rimuovi giocatori.",
   utenti: "Persone che sono entrate nell'app con Google."
 };
@@ -685,6 +729,50 @@ function rankingHTML() {
 }
 
 /* ---------- Admin: Partita ---------- */
+function draftTeam(i, side, ids, stats, g) {
+  return `<section class="team ${side}">
+    <div class="team-h"><h4>Squadra ${side} <small class="meta num">(${ids.length})</small></h4><div class="tg num">${g.toFixed(1)}<small> totale</small></div></div>
+    <ul class="flist">${sortIdsByName(ids).map(id => `<li><span>${esc(pName(id))}</span><button class="btn sm" id="dm-${i}-${id}" data-act="dmove" data-i="${i}" data-pid="${id}" title="Sposta nella squadra ${side === "A" ? "B" : "A"}">→ ${side === "A" ? "B" : "A"}</button></li>`).join("")}</ul>
+    <div class="tstats">${SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${((stats[k] || 0) / 5 * 100).toFixed(0)}%"></b></div><span class="num v">${(stats[k] || 0).toFixed(1)}</span></div>`).join("")}</div>
+  </section>`;
+}
+function draftHTML() {
+  const d = S.draft;
+  let h = `<div class="sec-head"><h2>Proposte da sistemare</h2><span class="meta num">${d.sel.length} convocati · ${d.items.length} formazion${d.items.length === 1 ? "e" : "i"} · bozza visibile solo a te</span></div>
+  <p class="note">Sposta i giocatori con i pulsanti → A / → B: medie, totali e indicatori si aggiornano subito. Le squadre devono avere lo stesso numero di giocatori. Alla pubblicazione le formazioni si riordinano dalla più equilibrata. Se ricarichi la pagina la bozza si perde.</p>
+  <div class="variants">`;
+  d.items.forEach((it, i) => {
+    const f = toFormation(it.A, it.B, d.avg);
+    const changed = !sameSet(it.A, it.oA) || !sameSet(it.B, it.oB);
+    const uneven = it.A.length !== it.B.length;
+    h += `<article class="variant${uneven ? " uneven" : ""}">
+      <div class="v-head">
+        <h3>Proposta ${i + 1}</h3>
+        <span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli">Ruoli ${f.req}</span>
+        <span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale">Generale ${f.eq}</span>
+        ${uneven ? `<span class="pill part">Squadre dispari: ${it.A.length} contro ${it.B.length}</span>` : changed ? `<span class="pill adm">Modificata</span>` : ""}
+        <span class="v-tools">
+          ${changed ? `<button class="btn sm" id="dr-${i}" data-act="dreset" data-i="${i}">Ripristina</button>` : ""}
+          ${d.items.length > 1 ? (S.confirm === "drop-" + i
+            ? `<button class="btn sm danger" id="dd-${i}" data-act="ddrop" data-i="${i}">Conferma</button><button class="btn sm" id="ddn-${i}" data-act="cancel">Annulla</button>`
+            : `<button class="btn sm danger-o" id="dda-${i}" data-act="ask" data-key="drop-${i}">Scarta</button>`) : ""}
+        </span>
+      </div>
+      <div class="teams">${draftTeam(i, "A", it.A, f.sA, f.gA)}${draftTeam(i, "B", it.B, f.sB, f.gB)}</div>
+    </article>`;
+  });
+  const valid = draftValid();
+  h += `</div>
+  <div class="manage-row" style="margin-top:16px">
+    <button class="btn primary" id="publish" data-act="publish" ${valid && !S.busy ? "" : "disabled"}>${S.busy ? "Pubblicazione…" : "Pubblica e apri la votazione"}</button>
+    ${S.confirm === "draft-discard"
+      ? `<button class="btn danger" id="dx-yes" data-act="ddiscard">Conferma</button><button class="btn" id="dx-no" data-act="cancel">Annulla</button>`
+      : `<button class="btn" id="dx-ask" data-act="ask" data-key="draft-discard">Torna ai convocati</button>`}
+    <span class="meta">${valid ? "" : "Riporta in pari le squadre segnalate per poter pubblicare."}</span>
+  </div>`;
+  return h;
+}
+
 function matchAdminHTML() {
   const m = currentMatch();
   let h = "";
@@ -733,6 +821,8 @@ function matchAdminHTML() {
       </div>
       <span class="meta">Nella classifica contano le formazioni definitive. Registrando il risultato la votazione si chiude e le statistiche delle formazioni vengono cancellate.</span>
     </div>`;
+  } else if (S.draft) {
+    h += draftHTML();
   } else {
     const sel = S.sel.filter(id => S.players.some(p => p.id === id)), n = sel.length;
     const ok = n >= MIN_SEL && n <= MAX_SEL && n % 2 === 0;
@@ -742,8 +832,8 @@ function matchAdminHTML() {
     <div class="bar"><button class="btn" id="sel-none" data-act="sel-none">Svuota</button><button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button></div>
     <div class="chips">${S.players.map(p => `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${set.has(p.id)}"><span class="dot"></span>${esc(p.name)}</button>`).join("")}</div>
     <div class="manage-row" style="margin-top:16px">
-      <button class="btn primary" id="publish" data-act="publish" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : `Genera ${PUBLISHED} formazioni e apri la votazione`}</button>
-      <span class="meta">${ok ? `Le formazioni si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"}. Dove manca un voto si usa ${FALLBACK}.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
+      <button class="btn primary" id="gen" data-act="gendraft" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : `Genera ${PUBLISHED} proposte`}</button>
+      <span class="meta">${ok ? `Le proposte si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"} (dove manca un voto si usa ${FALLBACK}). Prima di pubblicarle potrai modificarle.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
     </div>`;
   }
   const hist = S.matches.filter(x => x.status === "played").sort((a, b) => (b.playedAt || 0) - (a.playedAt || 0));
@@ -834,6 +924,11 @@ document.addEventListener("click", e => {
   else if (a === "sel-none") { S.sel = []; render(); }
   else if (a === "sel-all") { S.sel = S.players.map(p => p.id); render(); }
   else if (a === "publish") publishMatch();
+  else if (a === "gendraft") makeDraft();
+  else if (a === "dmove") draftMove(Number(b.dataset.i), b.dataset.pid);
+  else if (a === "dreset") draftReset(Number(b.dataset.i));
+  else if (a === "ddrop") draftDrop(Number(b.dataset.i));
+  else if (a === "ddiscard") { S.draft = null; S.confirm = null; render(); }
   else if (a === "winner") { S.winner = b.dataset.v; render(); }
   else if (a === "record") recordResult();
   else if (a === "fmove") moveFinal(b.dataset.pid, b.dataset.to);
