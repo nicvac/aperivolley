@@ -274,12 +274,28 @@ function playerAverages() {
   return avg;
 }
 
+/*
+  Criterio di formazione delle squadre
+  1. Ruoli (criterio principale): per ogni skill si confrontano i due migliori
+     giocatori di A con i due migliori di B (1° con 1°, 2° con 2°).
+     Squilibrio ruoli = media, su tutte le skill, di (|1°A − 1°B| + |2°A − 2°B|) / 2.
+  2. Equilibrio generale (vincolo): si scartano le divisioni in cui la media
+     generale delle due squadre differisce più di ROLE_GATE stelle; se ne restano
+     meno di PUBLISHED la soglia si allarga di 0,05 alla volta.
+  3. A parità di ruoli decide il costo generale:
+     0,4 × Δ media globale + 0,4 × Δ medio tra le skill + 0,2 × Δ skill più sbilanciata.
+*/
+const ROLE_GATE = 0.25;
+const TOP_PER_ROLE = 2;
+
 function generate(sel, avg) {
   const n = sel.length, h = n / 2, K = SKILLS.length;
   const vals = sel.map(pid => (avg[pid] || []).map(a => a == null ? FALLBACK : a).concat(Array(K).fill(FALLBACK)).slice(0, K));
   const totAll = SKILLS.map((_, j) => vals.reduce((s, v) => s + v[j], 0));
+  const top = Math.min(TOP_PER_ROLE, h);
   const res = [], idx = [0];
   const evalSplit = () => {
+    const inA = new Array(n).fill(false); idx.forEach(i => inA[i] = true);
     const sA = SKILLS.map((_, j) => idx.reduce((s, i) => s + vals[i][j], 0));
     const mA = sA.map(v => v / h), mB = sA.map((v, j) => (totAll[j] - v) / h);
     const dS = mA.map((v, j) => Math.abs(v - mB[j]));
@@ -288,16 +304,37 @@ function generate(sel, avg) {
     const dAvg = dS.reduce((a, b) => a + b, 0) / K;
     const dMax = Math.max(...dS);
     const cost = 0.4 * dG + 0.4 * dAvg + 0.2 * dMax;
-    res.push({ a: idx.slice(), cost, dG, mA, mB, gA, gB });
+    // squilibrio dei ruoli
+    let role = 0;
+    for (let j = 0; j < K; j++) {
+      const a = [], b = [];
+      for (let i = 0; i < n; i++) (inA[i] ? a : b).push(vals[i][j]);
+      a.sort((x, y) => y - x); b.sort((x, y) => y - x);
+      let g = 0;
+      for (let t = 0; t < top; t++) g += Math.abs(a[t] - b[t]);
+      role += g / top;
+    }
+    role /= K;
+    res.push({ a: idx.slice(), cost, role, dG, mA, mB, gA, gB });
   };
   const rec = start => {
     if (idx.length === h) { evalSplit(); return; }
     for (let i = start; i <= n - (h - idx.length); i++) { idx.push(i); rec(i + 1); idx.pop(); }
   };
   rec(1);
-  res.sort((x, y) => x.cost - y.cost || x.dG - y.dG);
+  // vincolo di equilibrio generale, con soglia che si allarga se servono più candidati
+  let gate = ROLE_GATE, pool = [];
+  const want = Math.min(PUBLISHED, res.length);
+  while (true) {
+    pool = res.filter(r => r.dG <= gate + 1e-9);
+    if (pool.length >= want || gate > 5) break;
+    gate += 0.05;
+  }
+  const key = x => Math.round(x * 100) / 100;     // ruoli quasi uguali = pari, decide l'equilibrio generale
+  pool.sort((x, y) => key(x.role) - key(y.role) || x.cost - y.cost || x.dG - y.dG);
   const r1 = x => Math.round(x * 10) / 10;
-  return res.slice(0, PUBLISHED).map(r => {
+  const score = x => Math.max(0, Math.round(100 * (1 - x)));
+  return pool.slice(0, PUBLISHED).map(r => {
     const set = new Set(r.a);
     const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, r1(m[j])]));
     return {
@@ -305,7 +342,8 @@ function generate(sel, avg) {
       B: sortIdsByName(sel.filter((_, i) => !set.has(i))),
       sA: statsOf(r.mA), sB: statsOf(r.mB),
       gA: r1(r.gA), gB: r1(r.gB),
-      eq: Math.max(0, Math.round(100 * (1 - r.cost)))
+      req: score(r.role),          // equilibrio ruoli
+      eq: score(r.cost)            // equilibrio generale
     };
   });
 }
@@ -593,7 +631,7 @@ function formationsHTML() {
   const total = counts.reduce((a, b) => a + b, 0);
   const mine = S.fvotes.get(S.uid);
   let h = `<div class="sec-head"><h2>Formazioni</h2><span class="meta num">Partita del ${fmtDate(m.createdAt)} · ${m.selected.length} convocati · ${total} vot${total === 1 ? "o" : "i"}</span></div>
-  <p class="note">Le formazioni sono ordinate dalla più equilibrata. Per ogni squadra vedi la media di ogni skill e il totale (media delle skill).</p>
+  <p class="note">Le formazioni sono ordinate dalla più equilibrata. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Per ogni squadra vedi la media di ogni skill e il totale (media delle skill).</p>
   <div class="variants">`;
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
@@ -601,7 +639,7 @@ function formationsHTML() {
     h += `<article class="variant${chosen ? " chosen" : ""}">
       <div class="v-head">
         <h3>Formazione ${i + 1}</h3>
-        <span class="eq ${eqClass(f.eq)} num">Equità ${f.eq}</span>
+        ${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli">Ruoli ${f.req}</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale">Generale ${f.eq}</span>
         <div class="vbar" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
         <button class="btn ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
       </div>
@@ -638,7 +676,7 @@ function matchAdminHTML() {
     <div class="card"><strong>1. Formazione giocata</strong><div class="radio-list">`;
     m.formations.forEach((f, i) => {
       h += `<label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
-        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · equità ${f.eq}<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
+        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · ruoli ${f.req ?? "–"} · generale ${f.eq}<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
     });
     h += `</div><strong>2. Squadra vincitrice</strong>
       <div class="seg" role="group" aria-label="Vincitrice">
