@@ -4,10 +4,13 @@ import {
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, addDoc, writeBatch
+  getFirestore, collection, doc, onSnapshot, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
+  writeBatch, deleteField
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-/* ---------- configurazione ---------- */
+/* =========================================================
+   Configurazione
+   ========================================================= */
 const firebaseConfig = {
   apiKey: "AIzaSyAQE4EXaYxFgJHb_9iMGbtOGghIFQyGWqo",
   authDomain: "aperivolley.firebaseapp.com",
@@ -16,7 +19,30 @@ const firebaseConfig = {
   messagingSenderId: "785233193282",
   appId: "1:785233193282:web:ceba7bbbbab7757f0040db"
 };
-const ADMIN_EMAIL = "nicola.vacca@gmail.com";   // deve coincidere con firestore.rules
+const SUPER_ADMIN = "nicola.vacca@gmail.com";   // deve coincidere con firestore.rules
+
+const SKILLS = [
+  { k: "bat", l: "Battuta" },
+  { k: "ric", l: "Ricezione" },
+  { k: "alz", l: "Alzata" },
+  { k: "att", l: "Attacco" },
+  { k: "mur", l: "Muro" },
+  { k: "rec", l: "Recupero palloni" }
+];
+const FALLBACK = 3;          // valore usato dove nessuno ha ancora votato
+const PUBLISHED = 5;         // formazioni pubblicate per la votazione
+const MIN_SEL = 4, MAX_SEL = 20;
+const PTS_WIN = 3, PTS_PLAYED = 1;   // classifica: 3 per vittoria + 1 per presenza
+
+const TEST_PLAYERS = [
+  "Marco Lorusso", "Giulia De Santis", "Antonio Carofiglio", "Francesca Papagni",
+  "Davide Ranieri", "Elena Mastrorilli", "Luca Pastore", "Sara Colella",
+  "Vito Amoruso", "Chiara Lattanzio", "Pietro Grimaldi", "Martina Sasso",
+  "Nicola Fanelli", "Alessia Debenedictis", "Gianluca Ventura", "Roberta Cassano"
+];
+
+const USER_VIEWS = [["vota", "Vota"], ["formazioni", "Formazioni"], ["classifica", "Classifica"]];
+const ADMIN_VIEWS = [["partita", "Partita"], ["roster", "Roster"], ["utenti", "Utenti"]];
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -24,180 +50,182 @@ const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: "select_account" });
 
-const SKILLS = [
-  { k: "ric", l: "Ricezione" },
-  { k: "alz", l: "Alzata" },
-  { k: "att", l: "Attacco" },
-  { k: "mur", l: "Muro" }
-];
-const FALLBACK = 3;      // valore usato dove manca un voto
-const MAX_SEL = 20;      // limite per l'enumerazione completa delle divisioni
-const STEP = 4;          // varianti mostrate per volta
-const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5l-5.9 3.1 1.2-6.5L2.5 9.5l6.6-.9z"/></svg>';
-
+/* =========================================================
+   Stato
+   ========================================================= */
 const S = {
-  phase: "loading",            // loading | signedout | ready
-  user: null, uid: null, isAdmin: false,
-  tab: "roster",
-  players: [], votes: new Map(), my: {}, dirty: false, saving: false, saveTimer: null,
-  week: null, localSel: null, weekTimer: null, weekSaving: false,
-  filter: "", sort: "name", manage: false, confirmDel: null, newName: "", bulk: "",
-  shown: STEP, memoKey: "", memo: null, failed: "", loginErr: "",
-  unsubs: []
+  phase: "loading",          // loading | signedout | ready
+  user: null, uid: null, isSuper: false, isAdminDoc: false, adminKnown: false,
+  view: "vota",
+  players: [], my: {}, dirty: false, saving: false, saveTimer: null,
+  state: null, matches: [], fvotes: new Map(),
+  users: [], admins: new Set(), votes: new Map(),
+  sel: [], played: null, winner: null,
+  confirm: null, busy: false, newName: "", bulk: "", resetText: "",
+  failed: "", loginErr: "",
+  unsubs: [], adminUnsubs: [], fvUnsub: null, fvMatch: null
 };
+const isAdmin = () => S.isSuper || S.isAdminDoc;
 
 const $view = document.getElementById("view");
 const $status = document.getElementById("status");
 const $tabs = document.getElementById("tabs");
 const $userbar = document.getElementById("userbar");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = v => v == null ? "–" : v.toFixed(1);
 const clone = o => JSON.parse(JSON.stringify(o || {}));
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "it", { sensitivity: "base" });
+const pName = id => (S.players.find(p => p.id === id) || {}).name || "Giocatore rimosso";
+const sortIdsByName = ids => ids.slice().sort((a, b) => pName(a).localeCompare(pName(b), "it", { sensitivity: "base" }));
+const fmtDate = ms => ms ? new Date(ms).toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" }) : "–";
+const fmtDateTime = ms => ms ? new Date(ms).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "–";
 const inAppBrowser = /FBAN|FBAV|Instagram|Line\/|; wv\)|Telegram/i.test(navigator.userAgent);
+const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5l-5.9 3.1 1.2-6.5L2.5 9.5l6.6-.9z"/></svg>';
 
-/* ---------- login ---------- */
+/* =========================================================
+   Navigazione (?p=vista)
+   ========================================================= */
+function readView() {
+  const p = new URLSearchParams(location.search).get("p");
+  const all = [...USER_VIEWS, ...ADMIN_VIEWS].map(v => v[0]);
+  return all.includes(p) ? p : "vota";
+}
+function go(view) {
+  S.view = view; S.confirm = null;
+  try { history.pushState(null, "", "?p=" + view); } catch (_) { }
+  render(); window.scrollTo(0, 0);
+}
+window.addEventListener("popstate", () => { S.view = readView(); S.confirm = null; render(); });
+
+/* =========================================================
+   Login
+   ========================================================= */
 async function login() {
   S.loginErr = "";
-  try {
-    await signInWithPopup(auth, provider);
-  } catch (e) {
+  try { await signInWithPopup(auth, provider); }
+  catch (e) {
     const c = e && e.code;
     if (c === "auth/popup-blocked" || c === "auth/operation-not-supported-in-this-environment" || c === "auth/cancelled-popup-request") {
       try { await signInWithRedirect(auth, provider); return; } catch (e2) { S.loginErr = msgFor(e2); }
-    } else if (c !== "auth/popup-closed-by-user") {
-      S.loginErr = msgFor(e);
-    }
+    } else if (c !== "auth/popup-closed-by-user") S.loginErr = msgFor(e);
     render();
   }
 }
 function msgFor(e) {
   const c = e && e.code;
   if (c === "auth/unauthorized-domain") return "Questo indirizzo non è autorizzato per l'accesso. Avvisa Nicola.";
+  if (c === "auth/operation-not-allowed") return "L'accesso con Google non è ancora attivo. Avvisa Nicola.";
   if (c === "auth/network-request-failed") return "Connessione assente. Controlla la rete e riprova.";
   return "Accesso non riuscito (" + (c || "errore") + "). Riprova, oppure apri la pagina in Chrome o Safari.";
 }
 getRedirectResult(auth).catch(e => { S.loginErr = msgFor(e); render(); });
 
-onAuthStateChanged(auth, user => {
-  S.unsubs.forEach(u => u()); S.unsubs = [];
-  S.user = user; S.uid = user ? user.uid : null;
-  S.isAdmin = !!(user && user.emailVerified && (user.email || "").toLowerCase() === ADMIN_EMAIL);
-  S.players = []; S.votes = new Map(); S.my = {}; S.week = null; S.localSel = null; S.failed = "";
+onAuthStateChanged(auth, async user => {
+  stopAll();
+  Object.assign(S, {
+    user, uid: user ? user.uid : null, players: [], my: {}, state: null, matches: [],
+    fvotes: new Map(), users: [], admins: new Set(), votes: new Map(), isAdminDoc: false, adminKnown: false, failed: ""
+  });
+  S.isSuper = !!(user && user.emailVerified && (user.email || "").toLowerCase() === SUPER_ADMIN);
   if (!user) { S.phase = "signedout"; render(); return; }
   S.phase = "ready";
-  subscribe();
   render();
+  registerUser(user);
+  subscribe();
 });
 
-function subscribe() {
-  const onErr = e => {
-    S.failed = e && e.code === "permission-denied"
-      ? "Il database ha rifiutato la lettura: le regole di sicurezza non sono ancora pubblicate."
-      : "Collegamento al database interrotto. Ricarica la pagina.";
-    render();
-  };
-  S.unsubs.push(onSnapshot(collection(db, "players"), snap => {
-    S.players = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    render();
-  }, onErr));
-  S.unsubs.push(onSnapshot(collection(db, "votes"), snap => {
-    S.votes = new Map(snap.docs.map(d => [d.id, d.data()]));
-    if (!S.dirty && !S.saving) {
-      const mine = S.votes.get(S.uid);
-      S.my = clone(mine && mine.ratings);
-    }
-    render();
-  }, onErr));
-  S.unsubs.push(onSnapshot(doc(db, "week", "current"), snap => {
-    S.week = snap.exists() ? snap.data() : null;
-    if (S.isAdmin && !S.weekSaving && !S.weekTimer) S.localSel = null;
-    render();
-  }, onErr));
+async function registerUser(user) {
+  const ref = doc(db, "users", user.uid);
+  const data = { email: user.email || "", name: user.displayName || "", lastLogin: Date.now() };
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) data.createdAt = Date.now();
+    await setDoc(ref, data, { merge: true });
+  } catch (e) { /* non bloccante */ }
 }
 
-/* ---------- statistiche ---------- */
-function computeStats() {
-  const st = {};
-  for (const p of S.players) st[p.id] = { sum: {}, cnt: {}, voters: 0 };
-  const add = ratings => {
-    for (const [pid, r] of Object.entries(ratings || {})) {
-      const s = st[pid]; if (!s || !r) continue;
-      let any = false;
-      for (const { k } of SKILLS) {
-        const v = Number(r[k]);
-        if (Number.isInteger(v) && v >= 1 && v <= 5) { s.sum[k] = (s.sum[k] || 0) + v; s.cnt[k] = (s.cnt[k] || 0) + 1; any = true; }
-      }
-      if (any) s.voters++;
-    }
-  };
-  for (const [vid, d] of S.votes) if (vid !== S.uid) add(d && d.ratings);
-  if (S.uid) add(S.my);
-  const out = {};
-  for (const p of S.players) {
-    const s = st[p.id], avg = {}; let tot = 0, n = 0;
-    for (const { k } of SKILLS) {
-      avg[k] = s.cnt[k] ? s.sum[k] / s.cnt[k] : null;
-      if (avg[k] != null) { tot += avg[k]; n++; }
-    }
-    out[p.id] = { avg, overall: n ? tot / n : null, voters: s.voters, complete: n === SKILLS.length };
-  }
-  return out;
+/* =========================================================
+   Sottoscrizioni
+   ========================================================= */
+function stopAll() {
+  S.unsubs.forEach(u => u()); S.unsubs = [];
+  stopAdmin();
+  if (S.fvUnsub) { S.fvUnsub(); S.fvUnsub = null; S.fvMatch = null; }
 }
+function stopAdmin() { S.adminUnsubs.forEach(u => u()); S.adminUnsubs = []; }
 
-/* ---------- generazione squadre ---------- */
-function generate(sel, stats) {
-  const n = sel.length, h = n / 2;
-  const vals = sel.map(pid => SKILLS.map(({ k }) => {
-    const a = stats[pid] && stats[pid].avg[k];
-    return a == null ? FALLBACK : a;
-  }));
-  const totAll = SKILLS.map((_, j) => vals.reduce((s, v) => s + v[j], 0));
-  const res = [], idx = [0];   // il primo giocatore sta sempre in A: niente doppioni speculari
-  const evalSplit = () => {
-    const sA = SKILLS.map((_, j) => idx.reduce((s, i) => s + vals[i][j], 0));
-    const mA = sA.map(v => v / h), mB = sA.map((v, j) => (totAll[j] - v) / h);
-    const dS = mA.map((v, j) => Math.abs(v - mB[j]));
-    const gA = mA.reduce((a, b) => a + b, 0) / SKILLS.length;
-    const gB = mB.reduce((a, b) => a + b, 0) / SKILLS.length;
-    const dG = Math.abs(gA - gB);
-    const dAvg = dS.reduce((a, b) => a + b, 0) / dS.length;
-    const dMax = Math.max(...dS);
-    const cost = 0.4 * dG + 0.4 * dAvg + 0.2 * dMax;
-    res.push({ a: idx.slice(), cost, dG, dAvg, dMax, dS, mA, mB, gA, gB, eq: Math.max(0, Math.round(100 * (1 - cost))) });
-  };
-  const rec = start => {
-    if (idx.length === h) { evalSplit(); return; }
-    for (let i = start; i <= n - (h - idx.length); i++) { idx.push(i); rec(i + 1); idx.pop(); }
-  };
-  rec(1);
-  res.sort((x, y) => x.cost - y.cost || x.dG - y.dG);
-  return res.map(r => {
-    const set = new Set(r.a);
-    return { ...r, A: r.a.map(i => sel[i]), B: sel.filter((_, i) => !set.has(i)) };
-  });
-}
-
-/* ---------- selezione della settimana ---------- */
-function validIds(list) { const ids = new Set(S.players.map(p => p.id)); return list.filter(id => ids.has(id)); }
-function currentSel() {
-  if (S.localSel) return validIds(S.localSel);
-  return validIds((S.week && S.week.selected) || []);
-}
-function setSel(list) {
-  S.localSel = list; S.shown = STEP;
-  if (S.isAdmin) { clearTimeout(S.weekTimer); S.weekTimer = setTimeout(saveWeek, 500); }
+function onErr(e) {
+  S.failed = e && e.code === "permission-denied"
+    ? "Il database ha rifiutato la richiesta: le regole di sicurezza vanno aggiornate."
+    : "Collegamento al database interrotto. Ricarica la pagina.";
   render();
 }
-async function saveWeek() {
-  if (S.weekSaving) { S.weekTimer = setTimeout(saveWeek, 400); return; }
-  S.weekTimer = null; S.weekSaving = true;
-  try { await setDoc(doc(db, "week", "current"), { selected: (S.localSel || []).slice(), updatedAt: Date.now() }); }
-  catch (e) { flash("Selezione non salvata. Riprova.", "warn"); }
-  S.weekSaving = false;
+
+function subscribe() {
+  const uid = S.uid;
+  S.unsubs.push(onSnapshot(collection(db, "players"), snap => {
+    S.players = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+    render();
+  }, onErr));
+  S.unsubs.push(onSnapshot(doc(db, "votes", uid), snap => {
+    if (!S.dirty && !S.saving) S.my = clone(snap.exists() ? snap.data().ratings : {});
+    render();
+  }, onErr));
+  S.unsubs.push(onSnapshot(doc(db, "config", "state"), snap => {
+    S.state = snap.exists() ? snap.data() : null;
+    watchFormationVotes();
+    render();
+  }, onErr));
+  S.unsubs.push(onSnapshot(collection(db, "matches"), snap => {
+    S.matches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, onErr));
+  S.unsubs.push(onSnapshot(doc(db, "admins", uid), snap => {
+    const was = isAdmin();
+    S.isAdminDoc = snap.exists(); S.adminKnown = true;
+    if (isAdmin() !== was || (isAdmin() && !S.adminUnsubs.length)) syncAdmin();
+    render();
+  }, () => { S.adminKnown = true; syncAdmin(); render(); }));
+  if (S.isSuper) syncAdmin();
 }
 
-/* ---------- voti ---------- */
+function syncAdmin() {
+  stopAdmin();
+  if (!isAdmin()) { S.users = []; S.admins = new Set(); S.votes = new Map(); return; }
+  S.adminUnsubs.push(onSnapshot(collection(db, "users"), snap => {
+    S.users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, onErr));
+  S.adminUnsubs.push(onSnapshot(collection(db, "admins"), snap => {
+    S.admins = new Set(snap.docs.map(d => d.id));
+    render();
+  }, onErr));
+  S.adminUnsubs.push(onSnapshot(collection(db, "votes"), snap => {
+    S.votes = new Map(snap.docs.map(d => [d.id, d.data()]));
+    render();
+  }, onErr));
+}
+
+function currentMatch() {
+  const id = S.state && S.state.currentMatch;
+  if (!id) return null;
+  const m = S.matches.find(x => x.id === id);
+  return m && m.status === "voting" ? m : null;
+}
+function watchFormationVotes() {
+  const id = S.state && S.state.currentMatch;
+  if (id === S.fvMatch) return;
+  if (S.fvUnsub) { S.fvUnsub(); S.fvUnsub = null; }
+  S.fvMatch = id || null; S.fvotes = new Map();
+  if (!id) return;
+  S.fvUnsub = onSnapshot(collection(db, "matches", id, "fvotes"), snap => {
+    S.fvotes = new Map(snap.docs.map(d => [d.id, d.data().choice]));
+    render();
+  }, onErr);
+}
+
+/* =========================================================
+   Voti alle skill
+   ========================================================= */
 function rate(pid, k, v) {
   const cur = (S.my[pid] && S.my[pid][k]) || 0;
   const r = S.my[pid] = Object.assign({}, S.my[pid]);
@@ -214,83 +242,293 @@ async function saveVotes() {
   S.saving = true; S.dirty = false;
   try {
     await setDoc(doc(db, "votes", S.uid), { ratings: clone(S.my), updatedAt: Date.now() });
-    flash("Voti salvati. Le medie si aggiornano per tutti.", "ok");
+    flash("Voti salvati.", "ok");
   } catch (e) {
     S.dirty = true;
     flash("Salvataggio non riuscito, riprovo tra poco.", "warn");
     S.saveTimer = setTimeout(saveVotes, 2500 + Math.random() * 1500);
   }
-  S.saving = false;
-  render();
+  S.saving = false; render();
 }
 
-/* ---------- gestione giocatori (solo admin) ---------- */
+/* =========================================================
+   Formazioni: calcolo (solo nel browser dell'amministratore)
+   ========================================================= */
+function playerAverages() {
+  const sum = {}, cnt = {};
+  for (const [, d] of S.votes) {
+    for (const [pid, r] of Object.entries((d && d.ratings) || {})) {
+      for (const { k } of SKILLS) {
+        const v = Number(r && r[k]);
+        if (Number.isInteger(v) && v >= 1 && v <= 5) {
+          const key = pid + "|" + k;
+          sum[key] = (sum[key] || 0) + v; cnt[key] = (cnt[key] || 0) + 1;
+        }
+      }
+    }
+  }
+  const avg = {};
+  for (const p of S.players) {
+    avg[p.id] = SKILLS.map(({ k }) => { const key = p.id + "|" + k; return cnt[key] ? sum[key] / cnt[key] : null; });
+  }
+  return avg;
+}
+
+function generate(sel, avg) {
+  const n = sel.length, h = n / 2, K = SKILLS.length;
+  const vals = sel.map(pid => (avg[pid] || []).map(a => a == null ? FALLBACK : a).concat(Array(K).fill(FALLBACK)).slice(0, K));
+  const totAll = SKILLS.map((_, j) => vals.reduce((s, v) => s + v[j], 0));
+  const res = [], idx = [0];
+  const evalSplit = () => {
+    const sA = SKILLS.map((_, j) => idx.reduce((s, i) => s + vals[i][j], 0));
+    const mA = sA.map(v => v / h), mB = sA.map((v, j) => (totAll[j] - v) / h);
+    const dS = mA.map((v, j) => Math.abs(v - mB[j]));
+    const gA = mA.reduce((a, b) => a + b, 0) / K, gB = mB.reduce((a, b) => a + b, 0) / K;
+    const dG = Math.abs(gA - gB);
+    const dAvg = dS.reduce((a, b) => a + b, 0) / K;
+    const dMax = Math.max(...dS);
+    const cost = 0.4 * dG + 0.4 * dAvg + 0.2 * dMax;
+    res.push({ a: idx.slice(), cost, dG, mA, mB, gA, gB });
+  };
+  const rec = start => {
+    if (idx.length === h) { evalSplit(); return; }
+    for (let i = start; i <= n - (h - idx.length); i++) { idx.push(i); rec(i + 1); idx.pop(); }
+  };
+  rec(1);
+  res.sort((x, y) => x.cost - y.cost || x.dG - y.dG);
+  const r1 = x => Math.round(x * 10) / 10;
+  return res.slice(0, PUBLISHED).map(r => {
+    const set = new Set(r.a);
+    const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, r1(m[j])]));
+    return {
+      A: sortIdsByName(r.a.map(i => sel[i])),
+      B: sortIdsByName(sel.filter((_, i) => !set.has(i))),
+      sA: statsOf(r.mA), sB: statsOf(r.mB),
+      gA: r1(r.gA), gB: r1(r.gB),
+      eq: Math.max(0, Math.round(100 * (1 - r.cost)))
+    };
+  });
+}
+
+async function publishMatch() {
+  const sel = S.sel.filter(id => S.players.some(p => p.id === id));
+  if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) return;
+  S.busy = true; render();
+  try {
+    const snap = await getDocs(collection(db, "votes"));   // dati freschi
+    S.votes = new Map(snap.docs.map(d => [d.id, d.data()]));
+    const formations = generate(sel, playerAverages());
+    const ref = doc(collection(db, "matches"));
+    const b = writeBatch(db);
+    b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
+    b.set(doc(db, "config", "state"), { currentMatch: ref.id, updatedAt: Date.now() });
+    await b.commit();
+    S.sel = []; S.played = null; S.winner = null;
+    flash("Formazioni pubblicate: ora i giocatori possono votarle.", "ok");
+  } catch (e) { flash("Pubblicazione non riuscita: " + (e.code || "errore"), "warn"); }
+  S.busy = false; render();
+}
+
+async function voteFormation(i) {
+  const m = currentMatch(); if (!m) return;
+  try { await setDoc(doc(db, "matches", m.id, "fvotes", S.uid), { choice: i, at: Date.now() }); }
+  catch (e) { flash("Voto non registrato. Riprova.", "warn"); }
+}
+
+async function recordResult() {
+  const m = currentMatch(); if (!m || S.played == null || !S.winner) return;
+  const f = m.formations[S.played]; if (!f) return;
+  S.busy = true; render();
+  try {
+    const b = writeBatch(db);
+    b.update(doc(db, "matches", m.id), {
+      status: "played", playedAt: Date.now(), playedIndex: S.played,
+      teamA: f.A, teamB: f.B, winner: S.winner, formations: deleteField()
+    });
+    b.set(doc(db, "config", "state"), { currentMatch: null, updatedAt: Date.now() });
+    await b.commit();
+    S.played = null; S.winner = null; S.confirm = null;
+    flash("Risultato registrato. La classifica è aggiornata.", "ok");
+  } catch (e) { flash("Risultato non salvato: " + (e.code || "errore"), "warn"); }
+  S.busy = false; render();
+}
+
+async function deleteMatchFully(id) {
+  const fv = await getDocs(collection(db, "matches", id, "fvotes"));
+  const b = writeBatch(db);
+  fv.docs.forEach(d => b.delete(d.ref));
+  b.delete(doc(db, "matches", id));
+  if (S.state && S.state.currentMatch === id) b.set(doc(db, "config", "state"), { currentMatch: null, updatedAt: Date.now() });
+  await b.commit();
+}
+async function cancelMatch(id) {
+  S.busy = true; render();
+  try { await deleteMatchFully(id); flash("Partita eliminata.", "ok"); }
+  catch (e) { flash("Eliminazione non riuscita.", "warn"); }
+  S.confirm = null; S.busy = false; render();
+}
+
+/* =========================================================
+   Classifica
+   ========================================================= */
+function ranking() {
+  const st = new Map(S.players.map(p => [p.id, { id: p.id, name: p.name, g: 0, v: 0 }]));
+  for (const m of S.matches) {
+    if (m.status !== "played") continue;
+    for (const side of ["A", "B"]) {
+      for (const id of (m["team" + side] || [])) {
+        const s = st.get(id); if (!s) continue;
+        s.g++; if (m.winner === side) s.v++;
+      }
+    }
+  }
+  const rows = [...st.values()].map(s => ({ ...s, pts: PTS_WIN * s.v + PTS_PLAYED * s.g, pct: s.g ? s.v / s.g : 0 }));
+  rows.sort((a, b) => b.pts - a.pts || b.pct - a.pct || b.g - a.g || byName(a, b));
+  let pos = 0, prev = null;
+  rows.forEach((r, i) => {
+    const key = r.pts + "|" + r.pct + "|" + r.g;
+    if (key !== prev) pos = i + 1;
+    r.pos = pos; prev = key;
+  });
+  return rows;
+}
+
+/* =========================================================
+   Roster e utenti (amministratori)
+   ========================================================= */
 async function addPlayers(names) {
   const list = names.map(n => n.trim()).filter(Boolean);
   if (!list.length) return;
   const existing = new Set(S.players.map(p => (p.name || "").toLowerCase()));
-  const fresh = list.filter(n => !existing.has(n.toLowerCase()));
+  const fresh = [...new Set(list)].filter(n => !existing.has(n.toLowerCase()));
   try {
-    for (let i = 0; i < fresh.length; i += 400) {
-      const b = writeBatch(db);
-      fresh.slice(i, i + 400).forEach(name => b.set(doc(collection(db, "players")), { name, createdAt: Date.now() }));
-      await b.commit();
-    }
+    const b = writeBatch(db);
+    fresh.forEach(name => b.set(doc(collection(db, "players")), { name: name.slice(0, 80), createdAt: Date.now() }));
+    await b.commit();
     S.newName = ""; S.bulk = "";
     const skipped = list.length - fresh.length;
     flash(`Aggiunti ${fresh.length} giocatori` + (skipped ? ` (${skipped} già presenti)` : "") + ".", "ok");
-  } catch (e) { flash("Giocatori non aggiunti: controlla di essere entrato come " + ADMIN_EMAIL + ".", "warn"); }
+  } catch (e) { flash("Giocatori non aggiunti.", "warn"); }
   render();
 }
 async function renamePlayer(pid, name) {
   name = name.trim(); const p = S.players.find(x => x.id === pid);
   if (!name || !p || p.name === name) return;
-  try { await updateDoc(doc(db, "players", pid), { name }); } catch (e) { flash("Nome non aggiornato.", "warn"); }
+  try { await updateDoc(doc(db, "players", pid), { name: name.slice(0, 80) }); } catch (e) { flash("Nome non aggiornato.", "warn"); }
 }
 async function removePlayer(pid) {
-  try { await deleteDoc(doc(db, "players", pid)); } catch (e) { flash("Giocatore non rimosso.", "warn"); }
-  S.confirmDel = null; render();
+  try { await deleteDoc(doc(db, "players", pid)); flash("Giocatore rimosso.", "ok"); }
+  catch (e) { flash("Giocatore non rimosso.", "warn"); }
+  S.confirm = null; render();
 }
 
-/* ---------- messaggi ---------- */
+async function commitDeletes(refs) {
+  for (let i = 0; i < refs.length; i += 450) {
+    const b = writeBatch(db);
+    refs.slice(i, i + 450).forEach(r => b.delete(r));
+    await b.commit();
+  }
+}
+async function resetTestData() {
+  S.busy = true; render();
+  try {
+    const refs = [];
+    for (const c of ["players", "votes", "week", "config"]) (await getDocs(collection(db, c))).docs.forEach(d => refs.push(d.ref));
+    const ms = await getDocs(collection(db, "matches"));
+    for (const m of ms.docs) {
+      (await getDocs(collection(db, "matches", m.id, "fvotes"))).docs.forEach(d => refs.push(d.ref));
+      refs.push(m.ref);
+    }
+    await commitDeletes(refs);
+    const b = writeBatch(db);
+    TEST_PLAYERS.forEach(name => b.set(doc(collection(db, "players")), { name, createdAt: Date.now() }));
+    await b.commit();
+    S.my = {}; S.resetText = "";
+    flash("Dati azzerati e 16 giocatori di prova caricati.", "ok");
+  } catch (e) { flash("Azzeramento non riuscito: " + (e.code || "errore"), "warn"); }
+  S.confirm = null; S.busy = false; render();
+}
+
+async function setAdmin(uid, on) {
+  const u = S.users.find(x => x.id === uid);
+  try {
+    if (on) await setDoc(doc(db, "admins", uid), { email: (u && u.email) || "", by: S.user.email || "", at: Date.now() });
+    else await deleteDoc(doc(db, "admins", uid));
+    flash(on ? "Amministratore aggiunto." : "Permessi di amministratore revocati.", "ok");
+  } catch (e) { flash("Operazione non riuscita.", "warn"); }
+  S.confirm = null; render();
+}
+async function deleteUser(uid) {
+  S.busy = true; render();
+  try {
+    const refs = [doc(db, "users", uid), doc(db, "votes", uid), doc(db, "admins", uid)];
+    const m = currentMatch(); if (m) refs.push(doc(db, "matches", m.id, "fvotes", uid));
+    await commitDeletes(refs);
+    flash("Utente eliminato insieme ai suoi voti.", "ok");
+  } catch (e) { flash("Eliminazione non riuscita.", "warn"); }
+  S.confirm = null; S.busy = false; render();
+}
+
+/* =========================================================
+   Messaggi
+   ========================================================= */
 let flashTimer = null, flashMsg = null;
 function flash(msg, kind) {
   flashMsg = { msg, kind }; renderStatus();
-  clearTimeout(flashTimer); flashTimer = setTimeout(() => { flashMsg = null; renderStatus(); }, 3000);
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => { flashMsg = null; renderStatus(); }, 3500);
 }
+const HINTS = {
+  vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
+  formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
+  classifica: `Punti = ${PTS_WIN} per ogni vittoria + ${PTS_PLAYED} per ogni partita giocata.`,
+  partita: "Scegli i convocati e pubblica le formazioni. Dopo la partita registra quella giocata e la squadra vincitrice.",
+  roster: "Aggiungi, rinomina o rimuovi giocatori.",
+  utenti: "Persone che sono entrate nell'app con Google."
+};
 function renderStatus() {
   if (S.phase !== "ready") { $status.hidden = true; return; }
   let msg, kind = "";
   if (flashMsg) { msg = flashMsg.msg; kind = flashMsg.kind; }
   else if (S.failed) { msg = S.failed; kind = "warn"; }
-  else if (S.tab === "roster") msg = "Tocca le stelle per votare (tocca di nuovo la stessa stella per togliere il voto). Hai un voto per skill per ogni giocatore e puoi cambiarlo quando vuoi.";
-  else msg = S.isAdmin ? "I convocati che scegli qui li vedono tutti." : "Convocati scelti da Nicola. Puoi provare altre combinazioni: restano solo sul tuo dispositivo.";
-  $status.hidden = false;
+  else msg = HINTS[S.view] || "";
+  $status.hidden = !msg;
   $status.className = "status" + (kind ? " " + kind : "");
   $status.textContent = msg;
 }
 
-/* ---------- render ---------- */
+/* =========================================================
+   Render
+   ========================================================= */
 function render() {
   const ae = document.activeElement;
   const active = ae && ae.id;
   const keep = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA") ? { v: ae.value, s: ae.selectionStart, e: ae.selectionEnd } : null;
 
+  const adminView = ADMIN_VIEWS.some(v => v[0] === S.view);
+
   if (S.phase === "ready") {
+    const views = isAdmin() ? [...USER_VIEWS, ...ADMIN_VIEWS] : USER_VIEWS;
+    const pending = currentMatch() && !S.fvotes.has(S.uid);
     $tabs.hidden = false;
-    $tabs.innerHTML = [["roster", "Roster"], ["squadre", "Squadre della settimana"]]
-      .map(([t, l]) => `<button class="tab" role="tab" id="tab-${t}" data-tab="${t}" aria-selected="${S.tab === t}">${l}</button>`).join("");
+    $tabs.innerHTML = views.map(([v, l]) => {
+      const adm = ADMIN_VIEWS.some(x => x[0] === v);
+      const dot = v === "formazioni" && pending ? '<span class="dot-new" aria-label="da votare"></span>' : "";
+      return `<a class="tab${adm ? " adm" : ""}" href="?p=${v}" data-nav="${v}" ${S.view === v ? 'aria-current="page"' : ""}>${l}${dot}</a>`;
+    }).join("");
     $userbar.hidden = false;
-    $userbar.innerHTML = `<span>Entrato come <strong>${esc(S.user.email)}</strong>${S.isAdmin ? " · amministratore" : ""}</span><button class="linkbtn" id="logout" data-act="logout">Esci</button>`;
+    $userbar.innerHTML = `<span>Entrato come <strong>${esc(S.user.email)}</strong>${isAdmin() ? " · amministratore" : ""}</span><button class="linkbtn" id="logout" data-act="logout">Esci</button>`;
   } else { $tabs.hidden = true; $userbar.hidden = true; }
   renderStatus();
 
-  if (S.phase === "loading") $view.innerHTML = `<div class="empty" style="margin-top:18px">Caricamento…</div>`;
+  if (S.phase === "loading") $view.innerHTML = `<div class="empty">Caricamento…</div>`;
   else if (S.phase === "signedout") $view.innerHTML = loginHTML();
-  else {
-    const stats = computeStats();
-    $view.innerHTML = S.tab === "roster" ? rosterHTML(stats) : teamsHTML(stats);
-  }
+  else if (adminView && !isAdmin()) $view.innerHTML = S.adminKnown || S.isSuper
+    ? `<div class="empty">Questa sezione è riservata agli amministratori. <a href="?p=vota" data-nav="vota">Vai a Vota</a></div>`
+    : `<div class="empty">Verifica dei permessi…</div>`;
+  else $view.innerHTML = ({
+    vota: voteHTML, formazioni: formationsHTML, classifica: rankingHTML,
+    partita: matchAdminHTML, roster: rosterHTML, utenti: usersHTML
+  }[S.view] || voteHTML)();
 
   if (active) {
     const el = document.getElementById(active);
@@ -301,214 +539,243 @@ function render() {
   }
 }
 
+const confirmBtns = (key, label, yesAct, data = "") => S.confirm === key
+  ? `<button class="btn danger" id="yes-${esc(key)}" data-act="${yesAct}" ${data}>Conferma</button><button class="btn" id="no-${esc(key)}" data-act="cancel">Annulla</button>`
+  : `<button class="btn danger-o" id="ask-${esc(key)}" data-act="ask" data-key="${esc(key)}">${label}</button>`;
+
 function loginHTML() {
   return `<section class="gate">
-    <h2>Vota i compagni</h2>
-    <p>Entra con il tuo account Google per dare i voti da 1 a 5 stelle su ricezione, alzata, attacco e muro, vedere le medie di tutti e le squadre della settimana.</p>
+    <h2>AperiVolley</h2>
+    <p>Entra con il tuo account Google per votare le skill dei compagni, scegliere le formazioni e vedere la classifica.</p>
     <button class="btn primary" id="login" data-act="login">Accedi con Google</button>
     ${S.loginErr ? `<p class="hint" style="color:var(--bad)">${esc(S.loginErr)}</p>` : ""}
-    ${inAppBrowser ? `<p class="hint" style="color:var(--warn)">Sembra che tu abbia aperto il link dentro un'app (Instagram, Facebook, Telegram…). Se l'accesso non funziona, apri la pagina in Chrome o Safari.</p>` : ""}
-    <p class="hint">Dal tuo account usiamo solo l'email, per riconoscere i tuoi voti.</p>
+    ${inAppBrowser ? `<p class="hint" style="color:var(--warn)">Hai aperto il link dentro un'app (Instagram, Facebook, Telegram…). Se l'accesso non funziona, apri la pagina in Chrome o Safari.</p>` : ""}
+    <p class="hint">Dal tuo account usiamo solo nome ed email, per riconoscere i tuoi voti.</p>
   </section>`;
 }
 
-function starsHTML(pid, k, mine) {
-  let h = '<div class="stars" role="group" aria-label="Il tuo voto">';
-  for (let v = 1; v <= 5; v++) {
-    h += `<button class="star${v <= mine ? " on" : ""}" id="st-${pid}-${k}-${v}" data-act="rate" data-pid="${pid}" data-k="${k}" data-v="${v}" aria-label="${v} stell${v > 1 ? "e" : "a"}" aria-pressed="${v === mine}">${STAR}</button>`;
-  }
-  return h + "</div>";
-}
-
-function rosterHTML(stats) {
-  let list = S.players.slice();
-  const f = S.filter.trim().toLowerCase();
-  if (f) list = list.filter(p => (p.name || "").toLowerCase().includes(f));
-  if (S.sort === "avg") list.sort((a, b) => (stats[b.id].overall ?? -1) - (stats[a.id].overall ?? -1) || byName(a, b));
-  else list.sort(byName);
-  const ratedByMe = S.players.filter(p => S.my[p.id] && Object.keys(S.my[p.id]).length).length;
-
-  let h = `<div class="bar">
-    <div class="grow"><input class="field" id="filter" type="search" placeholder="Cerca giocatore" value="${esc(S.filter)}" aria-label="Cerca giocatore"></div>
-    <div class="seg" role="group" aria-label="Ordina">
-      <button id="sort-name" data-act="sort" data-v="name" aria-pressed="${S.sort === "name"}">A–Z</button>
-      <button id="sort-avg" data-act="sort" data-v="avg" aria-pressed="${S.sort === "avg"}">Media</button>
-    </div>
-    ${S.isAdmin ? `<button class="btn" id="manage" data-act="manage">${S.manage ? "Fine modifiche" : "Modifica elenco"}</button>` : ""}
-  </div>
-  <div class="legend">
-    <span><i style="background:var(--accent)"></i>Il tuo voto</span>
-    <span><i style="background:var(--ink);opacity:.75"></i>Media di tutte le valutazioni</span>
-    <span class="num">${S.players.length} giocatori · ne hai valutati ${ratedByMe}</span>
-  </div>`;
-
-  if (S.isAdmin && S.manage) {
-    h += `<form class="card" id="addform" style="margin-bottom:14px">
-      <strong>Aggiungi giocatori</strong>
-      <div class="manage-row">
-        <input class="field" id="newname" placeholder="Nome e cognome" value="${esc(S.newName)}" autocomplete="off">
-        <button class="btn primary" id="addbtn" type="submit">Aggiungi</button>
-      </div>
-      <label class="meta" for="bulk">Oppure incolla un elenco, un nome per riga:</label>
-      <textarea class="field" id="bulk" placeholder="Mario Rossi&#10;Anna Bianchi&#10;…">${esc(S.bulk)}</textarea>
-      <div class="manage-row"><button class="btn" id="bulkbtn" type="button" data-act="bulk">Aggiungi elenco</button>
-      <span class="meta">I nomi già presenti vengono saltati. I voti di un giocatore rimosso non contano più.</span></div>
-    </form>`;
-  }
-
-  if (S.failed && !S.players.length) return h + `<div class="empty">${esc(S.failed)}</div>`;
-  if (!S.players.length) return h + `<div class="empty">Il roster è vuoto. ${S.isAdmin ? "Usa “Modifica elenco” per aggiungere i giocatori." : "Nicola non ha ancora inserito i giocatori."}</div>`;
-  if (!list.length) return h + `<div class="empty">Nessun giocatore corrisponde a “${esc(S.filter)}”.</div>`;
-
-  h += '<div class="grid">';
-  for (const p of list) {
-    const s = stats[p.id], mine = S.my[p.id] || {};
+/* ---------- Vota ---------- */
+function voteHTML() {
+  if (!S.players.length) return `<div class="empty">Nessun giocatore nel roster.${isAdmin() ? ` Aggiungili dal pannello <a href="?p=roster" data-nav="roster">Roster</a>.` : ""}</div>`;
+  const done = S.players.filter(p => SKILLS.every(({ k }) => S.my[p.id] && S.my[p.id][k])).length;
+  let h = `<div class="sec-head"><h2>Vota le skill</h2><span class="meta num">Completati ${done} su ${S.players.length}</span></div><div class="grid">`;
+  for (const p of S.players) {
+    const mine = S.my[p.id] || {};
+    const n = SKILLS.filter(({ k }) => mine[k]).length;
     h += `<article class="card">
-      <div class="card-h">
-        <h3>${esc(p.name)}</h3>
-        <div style="text-align:right">
-          <div class="ovr num">${fmt(s.overall)}<small>/5</small></div>
-          <div class="votes num">${s.voters ? `${s.voters} valutazion${s.voters > 1 ? "i" : "e"}` : "nessun voto"}</div>
-        </div>
-      </div>`;
+      <div class="card-h"><h3>${esc(p.name)}</h3><span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
     for (const { k, l } of SKILLS) {
-      const a = s.avg[k];
-      h += `<div class="skill">
-        <span class="lbl">${l}</span>
-        ${starsHTML(p.id, k, mine[k] || 0)}
-        <div class="track" aria-hidden="true"><b style="width:${a == null ? 0 : (a / 5 * 100).toFixed(1)}%"></b></div>
-        <span class="avg num${a == null ? " none" : ""}" title="Media">${fmt(a)}</span>
-      </div>`;
-    }
-    if (S.isAdmin && S.manage) {
-      const c = S.confirmDel === p.id;
-      h += `<div class="manage-row">
-        <input class="field" id="rn-${p.id}" data-act="rename" data-pid="${p.id}" value="${esc(p.name)}" aria-label="Rinomina ${esc(p.name)}">
-        ${c ? `<button class="btn danger" id="del-${p.id}" data-act="del-yes" data-pid="${p.id}">Conferma rimozione</button>
-               <button class="btn" id="delno-${p.id}" data-act="del-no">Annulla</button>`
-          : `<button class="btn danger" id="del-${p.id}" data-act="del" data-pid="${p.id}">Rimuovi</button>`}
-      </div>`;
+      h += `<div class="skill"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
+      for (let v = 1; v <= 5; v++) {
+        h += `<button class="star${v <= (mine[k] || 0) ? " on" : ""}" id="st-${p.id}-${k}-${v}" data-act="rate" data-pid="${p.id}" data-k="${k}" data-v="${v}" aria-label="${l}: ${v} stell${v > 1 ? "e" : "a"}" aria-pressed="${v === mine[k]}">${STAR}</button>`;
+      }
+      h += `</div></div>`;
     }
     h += `</article>`;
   }
-  return h + "</div>";
+  return h + `</div>`;
 }
 
+/* ---------- Formazioni ---------- */
+function teamBlock(side, ids, stats, g) {
+  return `<section class="team ${side}">
+    <div class="team-h"><h4>Squadra ${side}</h4><div class="tg num">${g.toFixed(1)}<small> totale</small></div></div>
+    <ul class="plist">${sortIdsByName(ids).map(id => `<li>${esc(pName(id))}</li>`).join("")}</ul>
+    <div class="tstats">${SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${((stats[k] || 0) / 5 * 100).toFixed(0)}%"></b></div><span class="num v">${(stats[k] || 0).toFixed(1)}</span></div>`).join("")}</div>
+  </section>`;
+}
 const eqClass = e => e >= 90 ? "g" : e >= 75 ? "w" : "b";
 
-function teamHTML(side, ids, means, g, stats) {
-  const rows = ids.map(id => {
-    const p = S.players.find(x => x.id === id), s = stats[id];
-    return { name: p ? p.name : "?", ov: s && s.overall, warn: !s || !s.complete };
-  }).sort((a, b) => (b.ov ?? 0) - (a.ov ?? 0));
-  let h = `<section class="team ${side}">
-    <div class="team-h"><h4>Squadra ${side}</h4><div class="tg num">${g.toFixed(2)}<small> media globale</small></div></div>
-    <ul class="plist">${rows.map(r => `<li><span>${esc(r.name)}</span><span class="num${r.warn ? " warnp" : ""}" title="${r.warn ? "Voti mancanti: usato 3 dove manca" : "Media del giocatore"}">${r.ov == null ? "3.0*" : r.ov.toFixed(1) + (r.warn ? "*" : "")}</span></li>`).join("")}</ul>
-    <div class="tstats">`;
-  SKILLS.forEach(({ l }, j) => {
-    h += `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${(means[j] / 5 * 100).toFixed(1)}%"></b></div><span class="num" style="text-align:right;font-weight:600">${means[j].toFixed(2)}</span></div>`;
-  });
-  return h + `</div><div class="meta num">Somma globale: ${(g * ids.length).toFixed(1)}</div></section>`;
-}
-
-function teamsHTML(stats) {
-  const sel = currentSel(), selSet = new Set(sel), n = sel.length;
-  const okCount = n >= 4 && n % 2 === 0 && n <= MAX_SEL;
-  const isLocal = !S.isAdmin && S.localSel;
-
-  let h = `<div class="sel-head">
-    <h2>Convocati</h2>
-    <span class="count num ${n === 12 ? "okc" : okCount ? "" : "badc"}">${n} / 12</span>
-    <span class="meta">${S.isAdmin ? "Selezione condivisa con tutti." : isLocal ? "Selezione modificata solo su questo dispositivo." : "Selezione impostata da Nicola."}</span>
-  </div>
-  <div class="bar" style="margin-top:0">
-    <button class="btn" id="sel-none" data-act="sel-none">Svuota</button>
-    <button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button>
-    ${isLocal ? `<button class="btn" id="sel-reset" data-act="sel-reset">Torna ai convocati di Nicola</button>` : ""}
-  </div>`;
-  if (!S.players.length) return h + `<div class="empty">Nessun giocatore nel roster.</div>`;
-  h += `<div class="chips">`;
-  for (const p of S.players.slice().sort(byName)) {
-    h += `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${selSet.has(p.id)}"><span class="dot"></span>${esc(p.name)}<span class="s num">${fmt(stats[p.id].overall)}</span></button>`;
-  }
-  h += `</div>`;
-
-  if (!okCount) {
-    const why = n > MAX_SEL ? `Seleziona al massimo ${MAX_SEL} giocatori.`
-      : n % 2 ? "Serve un numero pari di giocatori per fare due squadre."
-        : "Seleziona i 12 giocatori della settimana per generare le squadre.";
-    return h + `<div class="empty" style="margin-top:22px">${why}</div>`;
-  }
-
-  const key = JSON.stringify([sel, sel.map(id => stats[id].avg)]);
-  if (key !== S.memoKey) { S.memoKey = key; S.memo = generate(sel, stats); }
-  const all = S.memo;
-  const missing = sel.filter(id => !stats[id].complete).length;
-  h += `<p class="note num">${all.length} combinazioni valutate, dalla più equilibrata alla meno equilibrata.
-    L'equità (0–100) combina la differenza di media globale (40%), la differenza media tra le skill (40%) e la skill più sbilanciata (20%).
-    ${missing ? `<br><span style="color:var(--warn)">* ${missing} convocat${missing > 1 ? "i hanno" : "o ha"} voti mancanti: dove manca un voto si usa 3.</span>` : ""}</p>`;
-
-  h += `<div class="variants">`;
-  all.slice(0, S.shown).forEach((r, i) => {
-    const worst = SKILLS[r.dS.indexOf(r.dMax)].l;
-    h += `<article class="variant">
+function formationsHTML() {
+  const m = currentMatch();
+  if (!m) return `<div class="empty">Nessuna partita in programma. Quando gli organizzatori scelgono i convocati, qui trovi le formazioni da votare.</div>`;
+  const counts = m.formations.map((_, i) => [...S.fvotes.values()].filter(c => c === i).length);
+  const total = counts.reduce((a, b) => a + b, 0);
+  const mine = S.fvotes.get(S.uid);
+  let h = `<div class="sec-head"><h2>Formazioni</h2><span class="meta num">Partita del ${fmtDate(m.createdAt)} · ${m.selected.length} convocati · ${total} vot${total === 1 ? "o" : "i"}</span></div>
+  <p class="note">Le formazioni sono ordinate dalla più equilibrata. Per ogni squadra vedi la media di ogni skill e il totale (media delle skill).</p>
+  <div class="variants">`;
+  m.formations.forEach((f, i) => {
+    const pct = total ? Math.round(counts[i] / total * 100) : 0;
+    const chosen = mine === i;
+    h += `<article class="variant${chosen ? " chosen" : ""}">
       <div class="v-head">
-        <h3>Variante ${i + 1}</h3>
-        <span class="eq ${eqClass(r.eq)} num">Equità ${r.eq}</span>
-        <span class="v-meta num">Δ globale ${r.dG.toFixed(2)} · Δ medio skill ${r.dAvg.toFixed(2)} · più sbilanciata: ${worst} (Δ ${r.dMax.toFixed(2)})</span>
+        <h3>Formazione ${i + 1}</h3>
+        <span class="eq ${eqClass(f.eq)} num">Equità ${f.eq}</span>
+        <div class="vbar" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
+        <button class="btn ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
       </div>
-      <div class="teams">${teamHTML("A", r.A, r.mA, r.gA, stats)}${teamHTML("B", r.B, r.mB, r.gB, stats)}</div>
+      <div class="teams">${teamBlock("A", f.A, f.sA, f.gA)}${teamBlock("B", f.B, f.sB, f.gB)}</div>
     </article>`;
   });
-  h += `</div><div class="more">`;
-  if (S.shown < all.length) h += `<button class="btn" id="more" data-act="more">Mostra altre ${Math.min(STEP, all.length - S.shown)} varianti</button>`;
-  if (S.shown > STEP) h += `<button class="btn" id="less" data-act="less">Mostra solo le prime ${STEP}</button>`;
-  return h + `</div><p class="note num" style="text-align:center">Mostrate ${Math.min(S.shown, all.length)} di ${all.length}. Variante meno equilibrata: equità ${all[all.length - 1].eq}.</p>`;
+  return h + `</div>`;
 }
 
-/* ---------- eventi ---------- */
-$tabs.addEventListener("click", e => {
-  const t = e.target.closest(".tab"); if (!t) return;
-  S.tab = t.dataset.tab;
-  try { history.replaceState(null, "", "#" + S.tab); } catch (_) { }
-  render();
-});
+/* ---------- Classifica ---------- */
+function rankingHTML() {
+  const rows = ranking();
+  const played = S.matches.filter(m => m.status === "played").length;
+  if (!rows.length) return `<div class="empty">Nessun giocatore nel roster.</div>`;
+  let h = `<div class="sec-head"><h2>Classifica</h2><span class="meta num">${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}</span></div>
+  <p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite.</p>
+  <div class="tbl-wrap"><table class="rank">
+    <thead><tr><th>#</th><th>Giocatore</th><th class="r">Punti</th><th class="r">Giocate</th><th class="r">Vinte</th><th class="r">% vittorie</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    h += `<tr class="${r.pos <= 3 && r.pts > 0 ? "podium" : ""}${r.g === 0 ? " zero" : ""}"><td class="num">${r.pos}</td><td>${esc(r.name)}</td><td class="r num pts">${r.pts}</td><td class="r num">${r.g}</td><td class="r num">${r.v}</td><td class="r num">${r.g ? Math.round(r.pct * 100) + "%" : "–"}</td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+/* ---------- Admin: Partita ---------- */
+function matchAdminHTML() {
+  const m = currentMatch();
+  let h = "";
+  if (m) {
+    const counts = m.formations.map((_, i) => [...S.fvotes.values()].filter(c => c === i).length);
+    const best = counts.indexOf(Math.max(...counts));
+    if (S.played == null) S.played = counts.some(c => c > 0) ? best : 0;
+    h += `<div class="sec-head"><h2>Partita in votazione</h2><span class="meta num">Pubblicata il ${fmtDateTime(m.createdAt)} · ${S.fvotes.size} vot${S.fvotes.size === 1 ? "o" : "i"}</span></div>
+    <div class="card"><strong>1. Formazione giocata</strong><div class="radio-list">`;
+    m.formations.forEach((f, i) => {
+      h += `<label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
+        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · equità ${f.eq}<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
+    });
+    h += `</div><strong>2. Squadra vincitrice</strong>
+      <div class="seg" role="group" aria-label="Vincitrice">
+        <button id="win-A" data-act="winner" data-v="A" aria-pressed="${S.winner === "A"}">Squadra A</button>
+        <button id="win-B" data-act="winner" data-v="B" aria-pressed="${S.winner === "B"}">Squadra B</button>
+      </div>
+      <div class="manage-row">
+        <button class="btn primary" id="record" data-act="record" ${S.winner && !S.busy ? "" : "disabled"}>Registra risultato</button>
+        ${confirmBtns("cancel-" + m.id, "Annulla partita", "cancelmatch", `data-id="${m.id}"`)}
+      </div>
+      <span class="meta">Registrando il risultato la votazione si chiude e la classifica si aggiorna. Le statistiche delle formazioni vengono cancellate.</span>
+    </div>`;
+  } else {
+    const sel = S.sel.filter(id => S.players.some(p => p.id === id)), n = sel.length;
+    const ok = n >= MIN_SEL && n <= MAX_SEL && n % 2 === 0;
+    const set = new Set(sel);
+    const voters = S.votes.size;
+    h += `<div class="sec-head"><h2>Nuova partita</h2><span class="count num ${n === 12 ? "okc" : ok ? "" : "badc"}">${n} / 12</span></div>
+    <div class="bar"><button class="btn" id="sel-none" data-act="sel-none">Svuota</button><button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button></div>
+    <div class="chips">${S.players.map(p => `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${set.has(p.id)}"><span class="dot"></span>${esc(p.name)}</button>`).join("")}</div>
+    <div class="manage-row" style="margin-top:16px">
+      <button class="btn primary" id="publish" data-act="publish" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : `Genera ${PUBLISHED} formazioni e apri la votazione`}</button>
+      <span class="meta">${ok ? `Le formazioni si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"}. Dove manca un voto si usa ${FALLBACK}.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
+    </div>`;
+  }
+  const hist = S.matches.filter(x => x.status === "played").sort((a, b) => (b.playedAt || 0) - (a.playedAt || 0));
+  h += `<div class="sec-head" style="margin-top:28px"><h2>Partite giocate</h2><span class="meta num">${hist.length}</span></div>`;
+  if (!hist.length) h += `<div class="empty">Nessuna partita registrata.</div>`;
+  else h += `<div class="acc-list">${hist.map(x => `<div class="acc"><div class="who"><b>${fmtDate(x.playedAt)}</b> · vince la squadra ${esc(x.winner)}
+      <small>A${x.winner === "A" ? " 🏆" : ""}: ${sortIdsByName(x.teamA || []).map(pName).map(esc).join(", ")}</small>
+      <small>B${x.winner === "B" ? " 🏆" : ""}: ${sortIdsByName(x.teamB || []).map(pName).map(esc).join(", ")}</small></div>
+      ${confirmBtns("delm-" + x.id, "Elimina", "cancelmatch", `data-id="${x.id}"`)}</div>`).join("")}</div>`;
+  return h;
+}
+
+/* ---------- Admin: Roster ---------- */
+function rosterHTML() {
+  let h = `<div class="sec-head"><h2>Roster</h2><span class="meta num">${S.players.length} giocatori</span></div>
+  <form class="card" id="addform">
+    <strong>Aggiungi giocatori</strong>
+    <div class="manage-row"><input class="field" id="newname" placeholder="Nome e cognome" value="${esc(S.newName)}" autocomplete="off"><button class="btn primary" id="addbtn" type="submit">Aggiungi</button></div>
+    <label class="meta" for="bulk">Oppure incolla un elenco, un nome per riga:</label>
+    <textarea class="field" id="bulk" placeholder="Mario Rossi&#10;Anna Bianchi">${esc(S.bulk)}</textarea>
+    <div class="manage-row"><button class="btn" id="bulkbtn" type="button" data-act="bulk">Aggiungi elenco</button><span class="meta">I nomi già presenti vengono saltati.</span></div>
+  </form>
+  <div class="acc-list" style="margin-top:14px">`;
+  if (!S.players.length) h += `<div class="empty">Il roster è vuoto.</div>`;
+  for (const p of S.players) {
+    h += `<div class="acc"><input class="field grow" id="rn-${p.id}" data-act="rename" data-pid="${p.id}" value="${esc(p.name)}" aria-label="Nome di ${esc(p.name)}">
+      ${confirmBtns("delp-" + p.id, "Rimuovi", "delplayer", `data-pid="${p.id}"`)}</div>`;
+  }
+  h += `</div>
+  <div class="card danger-zone" style="margin-top:28px">
+    <strong>Azzera i dati</strong>
+    <span class="meta">Cancella tutti i giocatori, tutti i voti e tutte le partite, poi carica ${TEST_PLAYERS.length} giocatori di prova. Gli utenti e gli amministratori restano. Non si può annullare.</span>
+    ${S.confirm === "reset"
+      ? `<label class="meta" for="resettext">Scrivi <b>AZZERA</b> per confermare:</label>
+         <div class="manage-row"><input class="field" id="resettext" value="${esc(S.resetText)}" autocomplete="off">
+         <button class="btn danger" id="reset-yes" data-act="reset" ${S.resetText.trim() === "AZZERA" && !S.busy ? "" : "disabled"}>Azzera e carica i giocatori di prova</button>
+         <button class="btn" id="reset-no" data-act="cancel">Annulla</button></div>`
+      : `<div class="manage-row"><button class="btn danger-o" id="reset-ask" data-act="ask" data-key="reset">Azzera i dati…</button></div>`}
+  </div>`;
+  return h;
+}
+
+/* ---------- Admin: Utenti ---------- */
+function usersHTML() {
+  const list = S.users.slice().sort((a, b) => (b.lastLogin || 0) - (a.lastLogin || 0));
+  let h = `<div class="sec-head"><h2>Utenti</h2><span class="meta num">${list.length} utenti · ${S.admins.size + 1} amministratori</span></div>
+  <p class="note">Eliminare un utente cancella i suoi voti. Se la persona rientra con Google, ricompare come nuovo utente senza voti.</p>
+  <div class="acc-list">`;
+  if (!list.length) h += `<div class="empty">Nessun utente registrato.</div>`;
+  for (const u of list) {
+    const sup = (u.email || "").toLowerCase() === SUPER_ADMIN;
+    const adm = sup || S.admins.has(u.id);
+    const me = u.id === S.uid;
+    const v = S.votes.get(u.id);
+    const rated = v && v.ratings ? Object.keys(v.ratings).filter(pid => S.players.some(p => p.id === pid)).length : 0;
+    h += `<div class="acc"><div class="who"><b>${esc(u.name || u.email)}</b>${sup ? ' <span class="pill adm">Amministratore principale</span>' : adm ? ' <span class="pill adm">Amministratore</span>' : ""}${me ? ' <span class="pill">Tu</span>' : ""}
+      <small>${esc(u.email)} · ultimo accesso ${fmtDateTime(u.lastLogin)} · ha votato ${rated} giocator${rated === 1 ? "e" : "i"}</small></div>`;
+    if (!sup && !me) {
+      h += adm
+        ? confirmBtns("rev-" + u.id, "Revoca amministratore", "unadmin", `data-uid="${u.id}"`)
+        : `<button class="btn" id="prom-${u.id}" data-act="mkadmin" data-uid="${u.id}">Promuovi amministratore</button>`;
+      h += confirmBtns("delu-" + u.id, "Elimina", "deluser", `data-uid="${u.id}"`);
+    }
+    h += `</div>`;
+  }
+  return h + `</div>`;
+}
+
+/* =========================================================
+   Eventi
+   ========================================================= */
 document.addEventListener("click", e => {
-  const b = e.target.closest("[data-act]"); if (!b) return;
-  const a = b.dataset.act, pid = b.dataset.pid;
+  const nav = e.target.closest("[data-nav]");
+  if (nav && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); go(nav.dataset.nav); return; }
+  const b = e.target.closest("[data-act]"); if (!b || b.disabled) return;
+  const a = b.dataset.act;
   if (a === "login") login();
   else if (a === "logout") signOut(auth);
-  else if (a === "rate") rate(pid, b.dataset.k, Number(b.dataset.v));
-  else if (a === "sort") { S.sort = b.dataset.v; render(); }
-  else if (a === "manage") { S.manage = !S.manage; S.confirmDel = null; render(); }
-  else if (a === "del") { S.confirmDel = pid; render(); }
-  else if (a === "del-no") { S.confirmDel = null; render(); }
-  else if (a === "del-yes") removePlayer(pid);
-  else if (a === "bulk") addPlayers(S.bulk.split(/\r?\n/));
+  else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
+  else if (a === "fvote") voteFormation(Number(b.dataset.i));
+  else if (a === "ask") { S.confirm = b.dataset.key; render(); }
+  else if (a === "cancel") { S.confirm = null; S.resetText = ""; render(); }
   else if (a === "toggle") {
-    const sel = currentSel(); const i = sel.indexOf(pid);
-    if (i >= 0) sel.splice(i, 1); else sel.push(pid);
-    setSel(sel);
+    const i = S.sel.indexOf(b.dataset.pid);
+    if (i >= 0) S.sel.splice(i, 1); else S.sel.push(b.dataset.pid);
+    render();
   }
-  else if (a === "sel-none") setSel([]);
-  else if (a === "sel-all") setSel(S.players.map(p => p.id));
-  else if (a === "sel-reset") { S.localSel = null; S.shown = STEP; render(); }
-  else if (a === "more") { S.shown += STEP; render(); }
-  else if (a === "less") { S.shown = STEP; render(); }
-});
-$view.addEventListener("input", e => {
-  if (e.target.id === "filter") { S.filter = e.target.value; render(); }
-  else if (e.target.id === "newname") S.newName = e.target.value;
-  else if (e.target.id === "bulk") S.bulk = e.target.value;
+  else if (a === "sel-none") { S.sel = []; render(); }
+  else if (a === "sel-all") { S.sel = S.players.map(p => p.id); render(); }
+  else if (a === "publish") publishMatch();
+  else if (a === "winner") { S.winner = b.dataset.v; render(); }
+  else if (a === "record") recordResult();
+  else if (a === "cancelmatch") cancelMatch(b.dataset.id);
+  else if (a === "bulk") addPlayers(S.bulk.split(/\r?\n/));
+  else if (a === "delplayer") removePlayer(b.dataset.pid);
+  else if (a === "reset") resetTestData();
+  else if (a === "mkadmin") setAdmin(b.dataset.uid, true);
+  else if (a === "unadmin") setAdmin(b.dataset.uid, false);
+  else if (a === "deluser") deleteUser(b.dataset.uid);
 });
 $view.addEventListener("change", e => {
-  if (e.target.dataset.act === "rename") renamePlayer(e.target.dataset.pid, e.target.value);
+  const t = e.target;
+  if (t.dataset.act === "rename") renamePlayer(t.dataset.pid, t.value);
+  else if (t.dataset.act === "played") { S.played = Number(t.dataset.i); render(); }
+});
+$view.addEventListener("input", e => {
+  const t = e.target;
+  if (t.id === "newname") S.newName = t.value;
+  else if (t.id === "bulk") S.bulk = t.value;
+  else if (t.id === "resettext") { S.resetText = t.value; render(); }
 });
 $view.addEventListener("submit", e => {
   if (e.target.id === "addform") { e.preventDefault(); addPlayers([S.newName]); }
 });
-window.addEventListener("hashchange", () => {
-  const h = location.hash.slice(1); if (h === "roster" || h === "squadre") { S.tab = h; render(); }
-});
-{ const h = location.hash.slice(1); if (h === "roster" || h === "squadre") S.tab = h; }
+
+S.view = readView();
 render();

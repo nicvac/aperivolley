@@ -5,44 +5,79 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
-    // L'amministratore: unico che modifica roster e convocati
-    function isAdmin() {
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    // Amministratore principale (non revocabile)
+    function isSuper() {
       return signedIn()
         && request.auth.token.email == 'nicola.vacca@gmail.com'
         && request.auth.token.email_verified == true;
     }
-
-    // Elenco giocatori: lo leggono tutti gli utenti entrati, lo modifica solo l'admin
-    match /players/{playerId} {
-      allow read: if signedIn();
-      allow create, update: if isAdmin()
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 80;
-      allow delete: if isAdmin();
+    // Amministratori promossi dal pannello Utenti
+    function isAdmin() {
+      return isSuper()
+        || (signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
-    // Convocati della settimana: li leggono tutti, li sceglie solo l'admin
-    match /week/{docId} {
+    // Giocatori: tutti leggono i nomi, solo gli admin li modificano
+    match /players/{playerId} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    // Voti: un documento per persona. Tutti leggono (per le medie),
-    // ognuno scrive solo il proprio.
-    match /votes/{userId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn()
-        && request.auth.uid == userId
+    // Utenti che hanno fatto login: ognuno scrive solo il proprio profilo
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create, update: if isSelf(uid)
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.keys().hasOnly(['email', 'name', 'lastLogin', 'createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    // Elenco amministratori
+    match /admins/{uid} {
+      allow get: if isSelf(uid) || isAdmin();
+      allow list, write: if isAdmin();
+    }
+
+    // Voti alle skill: PRIVATI. Li legge solo chi li ha dati e gli admin.
+    match /votes/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create, update: if isSelf(uid)
         && request.resource.data.keys().hasOnly(['ratings', 'updatedAt'])
         && request.resource.data.ratings is map
         && request.resource.data.ratings.size() <= 300;
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow delete: if isSelf(uid) || isAdmin();
     }
 
-    // Tutto il resto è chiuso
+    // Stato generale (partita in corso)
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Partite: formazioni pubblicate e risultati
+    match /matches/{matchId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+
+      // Voti alle formazioni: uno per utente, solo con votazione aperta
+      match /fvotes/{uid} {
+        allow read: if signedIn();
+        allow create, update: if isSelf(uid)
+          && request.resource.data.keys().hasOnly(['choice', 'at'])
+          && request.resource.data.choice is int
+          && request.resource.data.choice >= 0
+          && request.resource.data.choice < 10
+          && get(/databases/$(database)/documents/matches/$(matchId)).data.status == 'voting';
+        allow delete: if isSelf(uid) || isAdmin();
+      }
+    }
+
+    // Tutto il resto: solo gli amministratori (serve anche per ripulire dati vecchi)
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
   }
 }

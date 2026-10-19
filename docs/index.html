@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AperiVolley Roster</title>
+<title>AperiVolley</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -40,9 +40,13 @@ button{cursor:pointer}
 .top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;border-bottom:3px solid var(--ink);padding-bottom:12px}
 .top h1{font-size:clamp(30px,5vw,44px);line-height:1;text-transform:uppercase}
 .top h1 span{color:var(--accent)}
-.tabs{display:flex;gap:4px;background:var(--surface-2);border-radius:999px;padding:4px}
-.tab{border:0;background:transparent;padding:8px 16px;border-radius:999px;font-family:var(--f-display);font-size:17px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-.tab[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+.tabs{display:flex;gap:4px;background:var(--surface-2);border-radius:999px;padding:4px;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.tab{position:relative;white-space:nowrap;text-decoration:none;border:0;background:transparent;padding:8px 14px;border-radius:999px;font-family:var(--f-display);font-size:17px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tab[aria-current="page"]{background:var(--ink);color:var(--bg)}
+.tab.adm{color:var(--accent)}
+.tab.adm[aria-current="page"]{background:var(--accent);color:#fff}
+.tab:first-of-type.adm,.tab:not(.adm)+.tab.adm{margin-left:10px}
+.dot-new{position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
 .status{margin-top:14px;padding:10px 14px;border-radius:var(--r);background:var(--surface-2);color:var(--muted);font-size:14px}
 .status.ok{background:var(--good-soft);color:var(--good)}
 .status.warn{background:var(--warn-soft);color:var(--warn)}
@@ -71,7 +75,7 @@ button{cursor:pointer}
 .ovr{font-family:var(--f-display);font-size:26px;font-weight:700;line-height:1}
 .ovr small{font-family:var(--f-body);font-size:12px;font-weight:500;color:var(--muted);margin-left:2px}
 .votes{font-size:12px;color:var(--muted)}
-.skill{display:grid;grid-template-columns:72px auto 1fr 34px;align-items:center;gap:8px}
+.skill{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
 .skill .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
 .stars{display:flex}
 .star{border:0;background:none;padding:2px;width:26px;height:26px;display:grid;place-items:center;color:var(--star-off)}
@@ -115,8 +119,8 @@ button{cursor:pointer}
 .A .team-h h4{color:var(--accent)} .B .team-h h4{color:var(--blue)}
 .tg{font-family:var(--f-display);font-size:28px;font-weight:700;line-height:1}
 .tg small{font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:500}
-.plist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
-.plist li{display:flex;justify-content:space-between;gap:6px;font-size:14px;border-bottom:1px dotted var(--line);padding:3px 0;min-width:0}
+.plist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px}
+.plist li{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;border-bottom:1px dotted var(--line);padding:3px 0;min-width:0}
 .plist li span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plist li .warnp{color:var(--warn)}
 .tstats{display:flex;flex-direction:column;gap:6px}
@@ -128,7 +132,6 @@ button{cursor:pointer}
 @media (max-width:640px){
   .teams{grid-template-columns:1fr}
   .team + .team{border-left:0;border-top:1px solid var(--line)}
-  .skill{grid-template-columns:64px auto 1fr 30px}
   .star{width:24px}
 }
 @media (prefers-reduced-motion:no-preference){.track b{transition:width .25s ease}}
@@ -150,13 +153,47 @@ button{cursor:pointer}
 .acc .who small{display:block;color:var(--muted)}
 .acc h3{font-size:20px}
 textarea.field{min-height:120px;resize:vertical;font:inherit}
+
+/* v2 */
+.empty{margin-top:18px}
+.sec-head{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;margin:20px 0 12px}
+.sec-head h2{font-size:26px;text-transform:uppercase}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:12px;font-weight:600}
+.pill.ok{background:var(--good-soft);color:var(--good)} .pill.part{background:var(--warn-soft);color:var(--warn)} .pill.adm{background:var(--accent-soft);color:var(--accent)}
+.card-h{align-items:center}
+.ts .v{text-align:right;font-weight:600}
+.variant.chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.vbar{display:flex;align-items:center;gap:8px;flex:1 1 140px;min-width:120px;font-size:13px;color:var(--muted)}
+.vbar .track{flex:1}
+.vbar .track b{background:var(--accent);opacity:1}
+.v-head .btn{margin-left:auto}
+.tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+table.rank{width:100%;border-collapse:collapse;font-size:15px}
+.rank th{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.05em;font-size:14px;color:var(--muted);text-align:left;padding:10px 14px;border-bottom:2px solid var(--line)}
+.rank td{padding:9px 14px;border-bottom:1px solid var(--line)}
+.rank tr:last-child td{border-bottom:0}
+.rank .r{text-align:right}
+.rank .pts{font-family:var(--f-display);font-size:20px;font-weight:700}
+.rank tr.podium .pts{color:var(--accent)}
+.rank tr.zero td{color:var(--muted)}
+.radio-list{display:flex;flex-direction:column;gap:6px}
+.radio{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.radio input{margin-top:4px;accent-color:var(--accent)}
+.radio small{color:var(--muted)}
+.radio:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn.danger-o{color:var(--bad);border-color:var(--bad)}
+.danger-zone{border-color:var(--bad)}
+.acc .grow{flex:1 1 200px;min-width:0;width:auto}
+.card .seg{align-self:flex-start}
+a{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>AperiVolley <span>·</span> Roster</h1>
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Sezioni" hidden></nav>
+    <h1>Aperi<span>Volley</span></h1>
+    <nav class="tabs" id="tabs" aria-label="Sezioni" hidden></nav>
   </header>
   <div id="userbar" class="userbar" hidden></div>
   <div id="status" class="status" role="status" hidden></div>
