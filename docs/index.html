@@ -187,6 +187,18 @@ table.rank{width:100%;border-collapse:collapse;font-size:15px}
 .acc .grow{flex:1 1 200px;min-width:0;width:auto}
 .card .seg{align-self:flex-start}
 a{color:var(--accent)}
+.fteams{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fteam{border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.fteam.A{border-top:3px solid var(--accent)} .fteam.B{border-top:3px solid var(--blue)}
+.fteam-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.fteam.A .fteam-h b{color:var(--accent)} .fteam.B .fteam-h b{color:var(--blue)}
+.flist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.flist li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:2px 0;border-bottom:1px dotted var(--line);min-width:0}
+.flist li>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fbtns{display:flex;gap:4px;flex:none}
+.btn.sm{padding:3px 8px;font-size:13px}
+select.field{width:auto;flex:1 1 200px;min-width:0}
+@media (max-width:640px){.fteams{grid-template-columns:1fr}}
 </style>
 </head>
 <body>

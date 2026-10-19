@@ -60,7 +60,7 @@ const S = {
   players: [], my: {}, dirty: false, saving: false, saveTimer: null,
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
-  sel: [], played: null, winner: null,
+  sel: [], played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "", resetText: "",
   failed: "", loginErr: "",
   unsubs: [], adminUnsubs: [], fvUnsub: null, fvMatch: null
@@ -373,19 +373,39 @@ async function voteFormation(i) {
   catch (e) { flash("Voto non registrato. Riprova.", "warn"); }
 }
 
+const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+// Formazioni definitive: partono dalla formazione scelta e si possono correggere
+function ensureFinal(m) {
+  const key = m.id + "|" + S.played;
+  if (S.finalFrom === key && S.finalA && S.finalB) return;
+  const f = m.formations[S.played] || { A: [], B: [] };
+  S.finalA = f.A.slice(); S.finalB = f.B.slice(); S.finalFrom = key;
+}
+function moveFinal(pid, to) {
+  S.finalA = S.finalA.filter(x => x !== pid);
+  S.finalB = S.finalB.filter(x => x !== pid);
+  if (to === "A") S.finalA.push(pid);
+  else if (to === "B") S.finalB.push(pid);
+  render();
+}
+
 async function recordResult() {
   const m = currentMatch(); if (!m || S.played == null || !S.winner) return;
   const f = m.formations[S.played]; if (!f) return;
+  ensureFinal(m);
+  const A = S.finalA.slice(), B = S.finalB.slice();
+  if (!A.length || !B.length) return;
+  const changed = !sameSet(A, f.A) || !sameSet(B, f.B);
   S.busy = true; render();
   try {
     const b = writeBatch(db);
     b.update(doc(db, "matches", m.id), {
       status: "played", playedAt: Date.now(), playedIndex: S.played,
-      teamA: f.A, teamB: f.B, winner: S.winner, formations: deleteField()
+      teamA: A, teamB: B, edited: changed, winner: S.winner, formations: deleteField()
     });
     b.set(doc(db, "config", "state"), { currentMatch: null, updatedAt: Date.now() });
     await b.commit();
-    S.played = null; S.winner = null; S.confirm = null;
+    S.played = null; S.winner = null; S.confirm = null; S.finalA = S.finalB = S.finalFrom = null; S.addPid = "";
     flash("Risultato registrato. La classifica è aggiornata.", "ok");
   } catch (e) { flash("Risultato non salvato: " + (e.code || "errore"), "warn"); }
   S.busy = false; render();
@@ -519,7 +539,7 @@ const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
   formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
   classifica: "Ogni partita vinta vale 2 punti, ogni partita persa 1 punto.",
-  partita: "Scegli i convocati e pubblica le formazioni. Dopo la partita registra quella giocata e la squadra vincitrice.",
+  partita: "Scegli i convocati e pubblica le formazioni. Dopo la partita inserisci le formazioni definitive e la squadra vincitrice.",
   roster: "Aggiungi, rinomina o rimuovi giocatori.",
   utenti: "Persone che sono entrate nell'app con Google."
 };
@@ -673,21 +693,45 @@ function matchAdminHTML() {
     const best = counts.indexOf(Math.max(...counts));
     if (S.played == null) S.played = counts.some(c => c > 0) ? best : 0;
     h += `<div class="sec-head"><h2>Partita in votazione</h2><span class="meta num">Pubblicata il ${fmtDateTime(m.createdAt)} · ${S.fvotes.size} vot${S.fvotes.size === 1 ? "o" : "i"}</span></div>
-    <div class="card"><strong>1. Formazione giocata</strong><div class="radio-list">`;
+    <div class="card"><strong>1. Formazione di partenza</strong><span class="meta">Di solito la più votata.</span><div class="radio-list">`;
     m.formations.forEach((f, i) => {
       h += `<label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
         <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · ruoli ${f.req ?? "–"} · generale ${f.eq}<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
     });
-    h += `</div><strong>2. Squadra vincitrice</strong>
+    ensureFinal(m);
+    const f = m.formations[S.played];
+    const edited = f && (!sameSet(S.finalA, f.A) || !sameSet(S.finalB, f.B));
+    const inTeams = new Set([...S.finalA, ...S.finalB]);
+    const others = S.players.filter(p => !inTeams.has(p.id));
+    if (S.addPid && inTeams.has(S.addPid)) S.addPid = "";
+    const teamCol = (side, ids) => `<div class="fteam ${side}"><div class="fteam-h"><b>Squadra ${side}</b><span class="meta num">${ids.length} giocator${ids.length === 1 ? "e" : "i"}</span></div>
+      ${ids.length ? `<ul class="flist">${sortIdsByName(ids).map(id => `<li><span>${esc(pName(id))}</span>
+        <span class="fbtns"><button class="btn sm" id="mv-${id}" data-act="fmove" data-pid="${id}" data-to="${side === "A" ? "B" : "A"}" title="Sposta nella squadra ${side === "A" ? "B" : "A"}">→ ${side === "A" ? "B" : "A"}</button>
+        <button class="btn sm danger-o" id="rm-${id}" data-act="fmove" data-pid="${id}" data-to="" title="Non ha giocato" aria-label="Togli ${esc(pName(id))}">✕</button></span></li>`).join("")}</ul>`
+        : `<p class="meta">Nessun giocatore.</p>`}</div>`;
+    h += `</div>
+      <strong>2. Formazioni definitive</strong>
+      <span class="meta">Parti dalla formazione scelta e correggila con chi ha giocato davvero: sposta i giocatori tra le squadre, togli chi era assente, aggiungi chi non era convocato.${edited ? ' <b style="color:var(--warn)">Modificata rispetto alla formazione ' + (S.played + 1) + '.</b>' : ""}</span>
+      <div class="fteams">${teamCol("A", S.finalA)}${teamCol("B", S.finalB)}</div>
+      <div class="manage-row">
+        <select class="field" id="addpid" aria-label="Aggiungi un giocatore" ${others.length ? "" : "disabled"}>
+          <option value="">${others.length ? "Aggiungi un giocatore…" : "Tutti i giocatori sono già in squadra"}</option>
+          ${others.map(p => `<option value="${p.id}" ${S.addPid === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+        </select>
+        <button class="btn" id="add-A" data-act="fadd" data-to="A" ${S.addPid ? "" : "disabled"}>In squadra A</button>
+        <button class="btn" id="add-B" data-act="fadd" data-to="B" ${S.addPid ? "" : "disabled"}>In squadra B</button>
+        ${edited ? `<button class="btn" id="freset" data-act="freset">Ripristina formazione ${S.played + 1}</button>` : ""}
+      </div>
+      <strong>3. Squadra vincitrice</strong>
       <div class="seg" role="group" aria-label="Vincitrice">
         <button id="win-A" data-act="winner" data-v="A" aria-pressed="${S.winner === "A"}">Squadra A</button>
         <button id="win-B" data-act="winner" data-v="B" aria-pressed="${S.winner === "B"}">Squadra B</button>
       </div>
       <div class="manage-row">
-        <button class="btn primary" id="record" data-act="record" ${S.winner && !S.busy ? "" : "disabled"}>Registra risultato</button>
+        <button class="btn primary" id="record" data-act="record" ${S.winner && S.finalA.length && S.finalB.length && !S.busy ? "" : "disabled"}>Registra risultato</button>
         ${confirmBtns("cancel-" + m.id, "Annulla partita", "cancelmatch", `data-id="${m.id}"`)}
       </div>
-      <span class="meta">Registrando il risultato la votazione si chiude e la classifica si aggiorna. Le statistiche delle formazioni vengono cancellate.</span>
+      <span class="meta">Nella classifica contano le formazioni definitive. Registrando il risultato la votazione si chiude e le statistiche delle formazioni vengono cancellate.</span>
     </div>`;
   } else {
     const sel = S.sel.filter(id => S.players.some(p => p.id === id)), n = sel.length;
@@ -705,7 +749,7 @@ function matchAdminHTML() {
   const hist = S.matches.filter(x => x.status === "played").sort((a, b) => (b.playedAt || 0) - (a.playedAt || 0));
   h += `<div class="sec-head" style="margin-top:28px"><h2>Partite giocate</h2><span class="meta num">${hist.length}</span></div>`;
   if (!hist.length) h += `<div class="empty">Nessuna partita registrata.</div>`;
-  else h += `<div class="acc-list">${hist.map(x => `<div class="acc"><div class="who"><b>${fmtDate(x.playedAt)}</b> · vince la squadra ${esc(x.winner)}
+  else h += `<div class="acc-list">${hist.map(x => `<div class="acc"><div class="who"><b>${fmtDate(x.playedAt)}</b> · vince la squadra ${esc(x.winner)}${x.edited ? " · formazioni corrette a mano" : ""}
       <small>A${x.winner === "A" ? " 🏆" : ""}: ${sortIdsByName(x.teamA || []).map(pName).map(esc).join(", ")}</small>
       <small>B${x.winner === "B" ? " 🏆" : ""}: ${sortIdsByName(x.teamB || []).map(pName).map(esc).join(", ")}</small></div>
       ${confirmBtns("delm-" + x.id, "Elimina", "cancelmatch", `data-id="${x.id}"`)}</div>`).join("")}</div>`;
@@ -792,6 +836,9 @@ document.addEventListener("click", e => {
   else if (a === "publish") publishMatch();
   else if (a === "winner") { S.winner = b.dataset.v; render(); }
   else if (a === "record") recordResult();
+  else if (a === "fmove") moveFinal(b.dataset.pid, b.dataset.to);
+  else if (a === "fadd") { const pid = S.addPid; S.addPid = ""; if (pid) moveFinal(pid, b.dataset.to); }
+  else if (a === "freset") { S.finalFrom = null; render(); }
   else if (a === "cancelmatch") cancelMatch(b.dataset.id);
   else if (a === "bulk") addPlayers(S.bulk.split(/\r?\n/));
   else if (a === "delplayer") removePlayer(b.dataset.pid);
@@ -804,6 +851,7 @@ $view.addEventListener("change", e => {
   const t = e.target;
   if (t.dataset.act === "rename") renamePlayer(t.dataset.pid, t.value);
   else if (t.dataset.act === "played") { S.played = Number(t.dataset.i); render(); }
+  else if (t.id === "addpid") { S.addPid = t.value; render(); }
 });
 $view.addEventListener("input", e => {
   const t = e.target;
