@@ -32,7 +32,7 @@ const SKILLS = [
 const FALLBACK = 3;          // valore usato dove nessuno ha ancora votato
 const PUBLISHED = 5;         // formazioni pubblicate per la votazione
 const MIN_SEL = 4, MAX_SEL = 20;
-const PTS_WIN = 3, PTS_PLAYED = 1;   // classifica: 3 per vittoria + 1 per presenza
+const PTS_WIN = 1, PTS_PLAYED = 1;   // classifica: 1 per vittoria + 1 per presenza (vittoria = 2, sconfitta = 1)
 
 const TEST_PLAYERS = [
   "Marco Lorusso", "Giulia De Santis", "Antonio Carofiglio", "Francesca Papagni",
@@ -480,7 +480,7 @@ function flash(msg, kind) {
 const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
   formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
-  classifica: `Punti = ${PTS_WIN} per ogni vittoria + ${PTS_PLAYED} per ogni partita giocata.`,
+  classifica: "Ogni partita vinta vale 2 punti, ogni partita persa 1 punto.",
   partita: "Scegli i convocati e pubblica le formazioni. Dopo la partita registra quella giocata e la squadra vincitrice.",
   roster: "Aggiungi, rinomina o rimuovi giocatori.",
   utenti: "Persone che sono entrate nell'app con Google."
@@ -617,7 +617,7 @@ function rankingHTML() {
   const played = S.matches.filter(m => m.status === "played").length;
   if (!rows.length) return `<div class="empty">Nessun giocatore nel roster.</div>`;
   let h = `<div class="sec-head"><h2>Classifica</h2><span class="meta num">${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}</span></div>
-  <p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite.</p>
+  <p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite.</p>
   <div class="tbl-wrap"><table class="rank">
     <thead><tr><th>#</th><th>Giocatore</th><th class="r">Punti</th><th class="r">Giocate</th><th class="r">Vinte</th><th class="r">% vittorie</th></tr></thead><tbody>`;
   for (const r of rows) {
