@@ -399,7 +399,7 @@ async function publishMatch() {
   try {
     const { sel, avg, items } = S.draft;
     const formations = items.map(it => toFormation(it.A, it.B, avg)).sort(rankCmp)
-      .map(({ _role, _cost, ...f }) => f);
+      .map(({ _role, _cost, ...f }) => ({ ...f, ...relStats(f), rel: true }));   // nel database solo percentuali
     const ref = doc(collection(db, "matches"));
     const b = writeBatch(db);
     b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
@@ -681,12 +681,24 @@ function voteHTML() {
 /* ---------- Formazioni ---------- */
 function teamBlock(side, ids, stats, g) {
   return `<section class="team ${side}">
-    <div class="team-h"><h4>Squadra ${side}</h4><div class="tg num">${g.toFixed(1)}<small> totale</small></div></div>
+    <div class="team-h"><h4>Squadra ${side}</h4><div class="tg num">${g}%<small> totale</small></div></div>
     <ul class="plist">${sortIdsByName(ids).map(id => `<li>${esc(pName(id))}</li>`).join("")}</ul>
-    <div class="tstats">${SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${((stats[k] || 0) / 5 * 100).toFixed(0)}%"></b></div><span class="num v">${(stats[k] || 0).toFixed(1)}</span></div>`).join("")}</div>
+    <div class="tstats">${statRows(stats)}</div>
   </section>`;
 }
 const eqClass = e => e >= 90 ? "g" : e >= 75 ? "w" : "b";
+
+/* Valori relativi: la skill più alta delle due squadre = 100%, le altre in proporzione.
+   Il totale: la squadra più forte = 100%. Nessun valore assoluto viene mostrato. */
+function relStats(f) {
+  if (f.rel) return { sA: f.sA, sB: f.sB, gA: f.gA, gB: f.gB };   // già relativi (salvati così)
+  const vals = SKILLS.flatMap(({ k }) => [f.sA[k] || 0, f.sB[k] || 0]);
+  const ref = Math.max(...vals) || 1, gref = Math.max(f.gA || 0, f.gB || 0) || 1;
+  const pct = v => Math.round((v || 0) / ref * 100);
+  const map = st => Object.fromEntries(SKILLS.map(({ k }) => [k, pct(st[k])]));
+  return { sA: map(f.sA), sB: map(f.sB), gA: Math.round((f.gA || 0) / gref * 100), gB: Math.round((f.gB || 0) / gref * 100) };
+}
+const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${stats[k] || 0}%</span></div>`).join("");
 
 function formationsHTML() {
   const m = currentMatch();
@@ -695,7 +707,7 @@ function formationsHTML() {
   const total = counts.reduce((a, b) => a + b, 0);
   const mine = S.fvotes.get(S.uid);
   let h = `<div class="sec-head"><h2>Formazioni</h2><span class="meta num">Partita del ${fmtDate(m.createdAt)} · ${m.selected.length} convocati · ${total} vot${total === 1 ? "o" : "i"}</span></div>
-  <p class="note">Le formazioni sono ordinate dalla più equilibrata. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Per ogni squadra vedi la media di ogni skill e il totale (media delle skill).</p>
+  <p class="note">Le formazioni sono ordinate dalla più equilibrata. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Le barre sono relative: la skill più alta tra le due squadre vale 100% e le altre sono in proporzione; nel totale la squadra più forte vale 100%.</p>
   <div class="variants">`;
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
@@ -707,7 +719,7 @@ function formationsHTML() {
         <div class="vbar" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
         <button class="btn ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
       </div>
-      <div class="teams">${teamBlock("A", f.A, f.sA, f.gA)}${teamBlock("B", f.B, f.sB, f.gB)}</div>
+      ${(() => { const r = relStats(f); return `<div class="teams">${teamBlock("A", f.A, r.sA, r.gA)}${teamBlock("B", f.B, r.sB, r.gB)}</div>`; })()}
     </article>`;
   });
   return h + `</div>`;
@@ -731,9 +743,9 @@ function rankingHTML() {
 /* ---------- Admin: Partita ---------- */
 function draftTeam(i, side, ids, stats, g) {
   return `<section class="team ${side}">
-    <div class="team-h"><h4>Squadra ${side} <small class="meta num">(${ids.length})</small></h4><div class="tg num">${g.toFixed(1)}<small> totale</small></div></div>
+    <div class="team-h"><h4>Squadra ${side} <small class="meta num">(${ids.length})</small></h4><div class="tg num">${g}%<small> totale</small></div></div>
     <ul class="flist">${sortIdsByName(ids).map(id => `<li><span>${esc(pName(id))}</span><button class="btn sm" id="dm-${i}-${id}" data-act="dmove" data-i="${i}" data-pid="${id}" title="Sposta nella squadra ${side === "A" ? "B" : "A"}">→ ${side === "A" ? "B" : "A"}</button></li>`).join("")}</ul>
-    <div class="tstats">${SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${((stats[k] || 0) / 5 * 100).toFixed(0)}%"></b></div><span class="num v">${(stats[k] || 0).toFixed(1)}</span></div>`).join("")}</div>
+    <div class="tstats">${statRows(stats)}</div>
   </section>`;
 }
 function draftHTML() {
@@ -758,7 +770,7 @@ function draftHTML() {
             : `<button class="btn sm danger-o" id="dda-${i}" data-act="ask" data-key="drop-${i}">Scarta</button>`) : ""}
         </span>
       </div>
-      <div class="teams">${draftTeam(i, "A", it.A, f.sA, f.gA)}${draftTeam(i, "B", it.B, f.sB, f.gB)}</div>
+      ${(() => { const r = relStats(f); return `<div class="teams">${draftTeam(i, "A", it.A, r.sA, r.gA)}${draftTeam(i, "B", it.B, r.sB, r.gB)}</div>`; })()}
     </article>`;
   });
   const valid = draftValid();
