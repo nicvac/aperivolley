@@ -8,38 +8,15 @@ import {
   writeBatch, deleteField
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
+import { firebaseConfig, SUPER_ADMIN, SKILLS, toRelative } from "./shared.js";
+
 /* =========================================================
    Configurazione
    ========================================================= */
-const firebaseConfig = {
-  apiKey: "AIzaSyAQE4EXaYxFgJHb_9iMGbtOGghIFQyGWqo",
-  authDomain: "aperivolley.firebaseapp.com",
-  projectId: "aperivolley",
-  storageBucket: "aperivolley.firebasestorage.app",
-  messagingSenderId: "785233193282",
-  appId: "1:785233193282:web:ceba7bbbbab7757f0040db"
-};
-const SUPER_ADMIN = "nicola.vacca@gmail.com";   // deve coincidere con firestore.rules
-
-const SKILLS = [
-  { k: "bat", l: "Battuta" },
-  { k: "ric", l: "Ricezione" },
-  { k: "alz", l: "Alzata" },
-  { k: "att", l: "Attacco" },
-  { k: "mur", l: "Muro" },
-  { k: "rec", l: "Recupero palloni" }
-];
 const FALLBACK = 3;          // valore usato dove nessuno ha ancora votato
 const PUBLISHED = 5;         // formazioni pubblicate per la votazione
 const MIN_SEL = 4, MAX_SEL = 20;
 const PTS_WIN = 1, PTS_PLAYED = 1;   // classifica: 1 per vittoria + 1 per presenza (vittoria = 2, sconfitta = 1)
-
-const TEST_PLAYERS = [
-  "Marco Lorusso", "Giulia De Santis", "Antonio Carofiglio", "Francesca Papagni",
-  "Davide Ranieri", "Elena Mastrorilli", "Luca Pastore", "Sara Colella",
-  "Vito Amoruso", "Chiara Lattanzio", "Pietro Grimaldi", "Martina Sasso",
-  "Nicola Fanelli", "Alessia Debenedictis", "Gianluca Ventura", "Roberta Cassano"
-];
 
 const USER_VIEWS = [["vota", "Vota"], ["formazioni", "Formazioni"], ["classifica", "Classifica"]];
 const ADMIN_VIEWS = [["partita", "Partita"], ["roster", "Roster"], ["utenti", "Utenti"]];
@@ -61,7 +38,7 @@ const S = {
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
   sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
-  confirm: null, busy: false, newName: "", bulk: "", resetText: "",
+  confirm: null, busy: false, newName: "", bulk: "",
   failed: "", loginErr: "",
   unsubs: [], adminUnsubs: [], fvUnsub: null, fvMatch: null
 };
@@ -399,7 +376,7 @@ async function publishMatch() {
   try {
     const { sel, avg, items } = S.draft;
     const formations = items.map(it => toFormation(it.A, it.B, avg)).sort(rankCmp)
-      .map(({ _role, _cost, ...f }) => ({ ...f, ...relStats(f), rel: true }));   // nel database solo percentuali
+      .map(({ _role, _cost, ...f }) => ({ ...f, ...toRelative(f) }));   // nel database solo percentuali
     const ref = doc(collection(db, "matches"));
     const b = writeBatch(db);
     b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
@@ -531,26 +508,6 @@ async function commitDeletes(refs) {
     await b.commit();
   }
 }
-async function resetTestData() {
-  S.busy = true; render();
-  try {
-    const refs = [];
-    for (const c of ["players", "votes", "week", "config"]) (await getDocs(collection(db, c))).docs.forEach(d => refs.push(d.ref));
-    const ms = await getDocs(collection(db, "matches"));
-    for (const m of ms.docs) {
-      (await getDocs(collection(db, "matches", m.id, "fvotes"))).docs.forEach(d => refs.push(d.ref));
-      refs.push(m.ref);
-    }
-    await commitDeletes(refs);
-    const b = writeBatch(db);
-    TEST_PLAYERS.forEach(name => b.set(doc(collection(db, "players")), { name, createdAt: Date.now() }));
-    await b.commit();
-    S.my = {}; S.resetText = "";
-    flash("Dati azzerati e 16 giocatori di prova caricati.", "ok");
-  } catch (e) { flash("Azzeramento non riuscito: " + (e.code || "errore"), "warn"); }
-  S.confirm = null; S.busy = false; render();
-}
-
 async function setAdmin(uid, on) {
   const u = S.users.find(x => x.id === uid);
   try {
@@ -688,16 +645,6 @@ function teamBlock(side, ids, stats, g) {
 }
 const eqClass = e => e >= 90 ? "g" : e >= 75 ? "w" : "b";
 
-/* Valori relativi: la skill più alta delle due squadre = 100%, le altre in proporzione.
-   Il totale: la squadra più forte = 100%. Nessun valore assoluto viene mostrato. */
-function relStats(f) {
-  if (f.rel) return { sA: f.sA, sB: f.sB, gA: f.gA, gB: f.gB };   // già relativi (salvati così)
-  const vals = SKILLS.flatMap(({ k }) => [f.sA[k] || 0, f.sB[k] || 0]);
-  const ref = Math.max(...vals) || 1, gref = Math.max(f.gA || 0, f.gB || 0) || 1;
-  const pct = v => Math.round((v || 0) / ref * 100);
-  const map = st => Object.fromEntries(SKILLS.map(({ k }) => [k, pct(st[k])]));
-  return { sA: map(f.sA), sB: map(f.sB), gA: Math.round((f.gA || 0) / gref * 100), gB: Math.round((f.gB || 0) / gref * 100) };
-}
 const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${stats[k] || 0}%</span></div>`).join("");
 
 function formationsHTML() {
@@ -719,7 +666,7 @@ function formationsHTML() {
         <div class="vbar" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
         <button class="btn ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
       </div>
-      ${(() => { const r = relStats(f); return `<div class="teams">${teamBlock("A", f.A, r.sA, r.gA)}${teamBlock("B", f.B, r.sB, r.gB)}</div>`; })()}
+      <div class="teams">${teamBlock("A", f.A, f.sA, f.gA)}${teamBlock("B", f.B, f.sB, f.gB)}</div>
     </article>`;
   });
   return h + `</div>`;
@@ -770,7 +717,7 @@ function draftHTML() {
             : `<button class="btn sm danger-o" id="dda-${i}" data-act="ask" data-key="drop-${i}">Scarta</button>`) : ""}
         </span>
       </div>
-      ${(() => { const r = relStats(f); return `<div class="teams">${draftTeam(i, "A", it.A, r.sA, r.gA)}${draftTeam(i, "B", it.B, r.sB, r.gB)}</div>`; })()}
+      ${(() => { const r = toRelative(f); return `<div class="teams">${draftTeam(i, "A", it.A, r.sA, r.gA)}${draftTeam(i, "B", it.B, r.sB, r.gB)}</div>`; })()}
     </article>`;
   });
   const valid = draftValid();
@@ -874,17 +821,7 @@ function rosterHTML() {
     h += `<div class="acc"><input class="field grow" id="rn-${p.id}" data-act="rename" data-pid="${p.id}" value="${esc(p.name)}" aria-label="Nome di ${esc(p.name)}">
       ${confirmBtns("delp-" + p.id, "Rimuovi", "delplayer", `data-pid="${p.id}"`)}</div>`;
   }
-  h += `</div>
-  <div class="card danger-zone" style="margin-top:28px">
-    <strong>Azzera i dati</strong>
-    <span class="meta">Cancella tutti i giocatori, tutti i voti e tutte le partite, poi carica ${TEST_PLAYERS.length} giocatori di prova. Gli utenti e gli amministratori restano. Non si può annullare.</span>
-    ${S.confirm === "reset"
-      ? `<label class="meta" for="resettext">Scrivi <b>AZZERA</b> per confermare:</label>
-         <div class="manage-row"><input class="field" id="resettext" value="${esc(S.resetText)}" autocomplete="off">
-         <button class="btn danger" id="reset-yes" data-act="reset" ${S.resetText.trim() === "AZZERA" && !S.busy ? "" : "disabled"}>Azzera e carica i giocatori di prova</button>
-         <button class="btn" id="reset-no" data-act="cancel">Annulla</button></div>`
-      : `<div class="manage-row"><button class="btn danger-o" id="reset-ask" data-act="ask" data-key="reset">Azzera i dati…</button></div>`}
-  </div>`;
+  h += `</div>`;
   return h;
 }
 
@@ -927,7 +864,7 @@ document.addEventListener("click", e => {
   else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
   else if (a === "fvote") voteFormation(Number(b.dataset.i));
   else if (a === "ask") { S.confirm = b.dataset.key; render(); }
-  else if (a === "cancel") { S.confirm = null; S.resetText = ""; render(); }
+  else if (a === "cancel") { S.confirm = null; render(); }
   else if (a === "toggle") {
     const i = S.sel.indexOf(b.dataset.pid);
     if (i >= 0) S.sel.splice(i, 1); else S.sel.push(b.dataset.pid);
@@ -949,7 +886,6 @@ document.addEventListener("click", e => {
   else if (a === "cancelmatch") cancelMatch(b.dataset.id);
   else if (a === "bulk") addPlayers(S.bulk.split(/\r?\n/));
   else if (a === "delplayer") removePlayer(b.dataset.pid);
-  else if (a === "reset") resetTestData();
   else if (a === "mkadmin") setAdmin(b.dataset.uid, true);
   else if (a === "unadmin") setAdmin(b.dataset.uid, false);
   else if (a === "deluser") deleteUser(b.dataset.uid);
@@ -964,7 +900,6 @@ $view.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "newname") S.newName = t.value;
   else if (t.id === "bulk") S.bulk = t.value;
-  else if (t.id === "resettext") { S.resetText = t.value; render(); }
 });
 $view.addEventListener("submit", e => {
   if (e.target.id === "addform") { e.preventDefault(); addPlayers([S.newName]); }

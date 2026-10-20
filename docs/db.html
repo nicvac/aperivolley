@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>AperiVolley · Database</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.kv div{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px}
+.kv b{display:block;font-family:var(--f-display);font-size:28px;line-height:1.1}
+.kv span{color:var(--muted);font-size:13px}
+.issue{color:var(--warn)} .okc{color:var(--good)}
+.log{white-space:pre-wrap;font-size:13px;background:var(--surface-2);border-radius:8px;padding:10px 12px;margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Aperi<span>Volley</span> <small class="meta" style="font-family:var(--f-body);font-size:16px;text-transform:none">database</small></h1>
+    <a class="btn" href="./">Torna all'app</a>
+  </header>
+  <div id="userbar" class="userbar" hidden></div>
+  <div id="status" class="status" role="status" hidden></div>
+  <main id="view"><div class="empty">Caricamento…</div></main>
+</div>
+<script type="module" src="db.js"></script>
+</body>
+</html>
