@@ -454,6 +454,7 @@ async function cancelMatch(id) {
    - computer: copia negli appunti (poi Ctrl+V nella chat)
    - altrimenti: scarica il file PNG
    ========================================================= */
+const SHARE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 7.5 12 3l4.5 4.5"/><path d="M9 10H7a2.5 2.5 0 0 0-2.5 2.5v6A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5v-6A2.5 2.5 0 0 0 17 10h-2"/></svg>';
 const H2I_URL = "https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js";
 const CAN_SHARE_FILES = (() => {
   try { return !!(navigator.canShare && navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] })); }
@@ -749,13 +750,15 @@ function formationsHTML() {
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
     const chosen = mine === i;
-    h += `<article class="variant${chosen ? " chosen" : ""}" id="form-${i}">
+    h += `<article class="variant has-shot${chosen ? " chosen" : ""}" id="form-${i}">
+      <button class="shot-btn no-shot${shotBusy === i ? " busy" : ""}${pendingShot && pendingShot.i === i ? " ready" : ""}" id="sh-${i}" data-act="shot" data-i="${i}" title="${shotLabel(i)}" aria-label="${shotLabel(i)}" ${shotBusy === i ? "disabled" : ""}>${SHARE_ICON}</button>
       <div class="v-head">
         <h3>Formazione ${i + 1}</h3>
         ${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli">Ruoli ${f.req}</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale">Generale ${f.eq}</span>
+        <span class="vh-break" aria-hidden="true"></span>
         <div class="vbar no-shot" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
         <button class="btn no-shot ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
-        <button class="btn sm no-shot shot-btn" id="sh-${i}" data-act="shot" data-i="${i}" ${shotBusy === i ? "disabled" : ""}>${shotLabel(i)}</button>
+
       </div>
       <div class="teams">${teamBlock("A", f.A, f.sA, f.gA)}${teamBlock("B", f.B, f.sB, f.gB)}</div>
     </article>`;
