@@ -1,6 +1,6 @@
 /* Layout: palestra — header da tabellone, due schede (Roster / Squadre), card per giocatore, varianti a due colonne A (arancio) vs B (blu) */
 :root{
-  --bg:#f2f4f7; --surface:#ffffff; --surface-2:#e9edf2; --ink:#142030; --muted:#5a6779; --line:#d7dde5;
+  --bg:#f2f4f7; --surface:#ffffff; --surface-2:#e9edf2; --ink:#142030; --muted:#5a6779; --line:#d7dde5; --frame:#3d4c5f; --frame-soft:#e3e8ef;
   --accent:#e2601a; --accent-soft:#fbe6d8; --blue:#1d5ea6; --blue-soft:#dce8f6;
   --star-off:#c9d1db; --good:#2c8548; --good-soft:#dcefe2; --warn:#a87708; --warn-soft:#f6ebcc; --bad:#b8382b; --bad-soft:#f6dcd8;
   --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
@@ -8,12 +8,12 @@
   --r:10px;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0e141c; --surface:#161f2a; --surface-2:#1e2935; --ink:#e7ecf2; --muted:#93a0b0; --line:#2a3644;
+  --bg:#0e141c; --surface:#161f2a; --surface-2:#1e2935; --ink:#e7ecf2; --muted:#93a0b0; --line:#2a3644; --frame:#7d8ea3; --frame-soft:#223041;
   --accent:#f07a35; --accent-soft:#3a2416; --blue:#5d9de6; --blue-soft:#18283b;
   --star-off:#3a4756; --good:#4db36d; --good-soft:#15291d; --warn:#e0aa3c; --warn-soft:#2d2512; --bad:#e8675c; --bad-soft:#331a18;
   color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#0e141c; --surface:#161f2a; --surface-2:#1e2935; --ink:#e7ecf2; --muted:#93a0b0; --line:#2a3644;
+  --bg:#0e141c; --surface:#161f2a; --surface-2:#1e2935; --ink:#e7ecf2; --muted:#93a0b0; --line:#2a3644; --frame:#7d8ea3; --frame-soft:#223041;
   --accent:#f07a35; --accent-soft:#3a2416; --blue:#5d9de6; --blue-soft:#18283b;
   --star-off:#3a4756; --good:#4db36d; --good-soft:#15291d; --warn:#e0aa3c; --warn-soft:#2d2512; --bad:#e8675c; --bad-soft:#331a18;
   color-scheme:dark}
@@ -94,9 +94,9 @@ button{cursor:pointer}
 .note{font-size:13px;color:var(--muted);margin-top:10px}
 
 /* variants */
-.variants{display:flex;flex-direction:column;gap:18px;margin-top:22px}
-.variant{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.v-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.variants{display:flex;flex-direction:column;gap:28px;margin-top:22px}
+.variant{background:var(--surface);border:2px solid var(--frame);border-radius:var(--r);overflow:hidden;box-shadow:0 2px 0 var(--frame-soft)}
+.v-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:12px 16px;background:var(--frame-soft);border-bottom:2px solid var(--frame)}
 .v-head h3{font-size:20px;text-transform:uppercase}
 .eq{font-family:var(--f-display);font-weight:700;font-size:18px;padding:3px 10px;border-radius:6px}
 .eq.g{background:var(--good-soft);color:var(--good)} .eq.w{background:var(--warn-soft);color:var(--warn)} .eq.b{background:var(--bad-soft);color:var(--bad)}
@@ -152,7 +152,8 @@ textarea.field{min-height:120px;resize:vertical;font:inherit}
 .pill.ok{background:var(--good-soft);color:var(--good)} .pill.part{background:var(--warn-soft);color:var(--warn)} .pill.adm{background:var(--accent-soft);color:var(--accent)}
 .card-h{align-items:center}
 .ts .v{text-align:right;font-weight:600}
-.variant.chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.variant.chosen{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.variant.chosen .v-head{background:var(--accent-soft);border-bottom-color:var(--accent)}
 .vbar{display:flex;align-items:center;gap:8px;flex:1 1 140px;min-width:120px;font-size:13px;color:var(--muted)}
 .vbar .track{flex:1}
 .vbar .track b{background:var(--accent);opacity:1}
@@ -190,6 +191,7 @@ a{color:var(--accent)}
 select.field{width:auto;flex:1 1 200px;min-width:0}
 @media (max-width:640px){.fteams{grid-template-columns:1fr}}
 .v-tools{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
-.variant.uneven{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}
+.variant.uneven{border-color:var(--warn);box-shadow:0 0 0 2px var(--warn)}
+.variant.uneven .v-head{background:var(--warn-soft);border-bottom-color:var(--warn)}
 .team .flist{margin-bottom:4px}
 a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
