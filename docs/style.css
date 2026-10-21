@@ -158,6 +158,7 @@ textarea.field{min-height:120px;resize:vertical;font:inherit}
 .vbar .track{flex:1}
 .vbar .track b{background:var(--accent);opacity:1}
 .v-head .btn{margin-left:auto}
+.v-head .btn + .shot-btn{margin-left:0}
 .tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 table.rank{width:100%;border-collapse:collapse;font-size:15px}
 .rank th{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.05em;font-size:14px;color:var(--muted);text-align:left;padding:10px 14px;border-bottom:2px solid var(--line)}

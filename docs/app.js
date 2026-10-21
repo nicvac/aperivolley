@@ -448,6 +448,95 @@ async function cancelMatch(id) {
 }
 
 /* =========================================================
+   Immagine della formazione (Copia / Condividi)
+   html-to-image ridisegna la scheda così com'è a schermo e la trasforma in PNG.
+   - telefono: menu Condividi del sistema (es. WhatsApp)
+   - computer: copia negli appunti (poi Ctrl+V nella chat)
+   - altrimenti: scarica il file PNG
+   ========================================================= */
+const H2I_URL = "https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js";
+const CAN_SHARE_FILES = (() => {
+  try { return !!(navigator.canShare && navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] })); }
+  catch (_) { return false; }
+})();
+const TOUCH = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+const CAN_COPY = !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem);
+const SHOT_MODE = CAN_SHARE_FILES && TOUCH ? "share" : CAN_COPY ? "copy" : CAN_SHARE_FILES ? "share" : "download";
+let h2iPromise = null, shotBusy = null, pendingShot = null;
+
+function loadH2I() {
+  if (window.htmlToImage) return Promise.resolve();
+  if (!h2iPromise) h2iPromise = new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = H2I_URL; sc.onload = res;
+    sc.onerror = () => { h2iPromise = null; rej(new Error("Libreria per le immagini non caricata")); };
+    document.head.appendChild(sc);
+  });
+  return h2iPromise;
+}
+function shotLabel(i) {
+  if (shotBusy === i) return "Preparo…";
+  if (pendingShot && pendingShot.i === i) return "Condividi ora";
+  return SHOT_MODE === "share" ? "Condividi" : SHOT_MODE === "copy" ? "Copia immagine" : "Scarica immagine";
+}
+async function makeShot(i) {
+  await loadH2I();
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  const el = document.getElementById("form-" + i);
+  if (!el) throw new Error("Formazione non trovata");
+  const opts = {
+    pixelRatio: Math.max(2, window.devicePixelRatio || 1),
+    backgroundColor: getComputedStyle(el).backgroundColor,
+    filter: n => !(n.classList && n.classList.contains("no-shot"))
+  };
+  await window.htmlToImage.toBlob(el, opts);          // primo passaggio: Safari carica i caratteri
+  const blob = await window.htmlToImage.toBlob(el, opts);
+  if (!blob) throw new Error("Immagine vuota");
+  return blob;
+}
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+async function shotFormation(i) {
+  const name = `aperivolley-formazione-${i + 1}.png`;
+  // secondo tocco dopo un blocco del browser: condivide l'immagine già pronta
+  if (pendingShot && pendingShot.i === i) {
+    const f = pendingShot.file; pendingShot = null; render();
+    try { await navigator.share({ files: [f], title: `Formazione ${i + 1}` }); }
+    catch (e) { if (e.name !== "AbortError") { downloadBlob(f, name); flash("Condivisione non disponibile: immagine scaricata.", "warn"); } }
+    return;
+  }
+  shotBusy = i; render();
+  try {
+    if (SHOT_MODE === "copy") {
+      // la promessa va passata subito a ClipboardItem: Safari lo richiede
+      const blobP = makeShot(i);
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blobP })]);
+        flash("Immagine copiata: incollala nella chat (Ctrl+V o Cmd+V).", "ok");
+      } catch (e) {
+        downloadBlob(await blobP, name);
+        flash("Copia non consentita dal browser: immagine scaricata.", "warn");
+      }
+    } else if (SHOT_MODE === "share") {
+      const file = new File([await makeShot(i)], name, { type: "image/png" });
+      try { await navigator.share({ files: [file], title: `Formazione ${i + 1}` }); }
+      catch (e) {
+        if (e.name === "NotAllowedError") { pendingShot = { i, file }; flash("Immagine pronta: tocca di nuovo «Condividi ora».", "ok"); }
+        else if (e.name !== "AbortError") { downloadBlob(file, name); flash("Condivisione non disponibile: immagine scaricata.", "warn"); }
+      }
+    } else {
+      downloadBlob(await makeShot(i), name);
+      flash("Immagine scaricata.", "ok");
+    }
+  } catch (e) { flash("Immagine non creata: " + (e.message || "errore"), "warn"); }
+  shotBusy = null; render();
+}
+
+/* =========================================================
    Classifica
    ========================================================= */
 function ranking() {
@@ -649,6 +738,7 @@ const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class=
 
 function formationsHTML() {
   const m = currentMatch();
+  if (m) loadH2I().catch(() => { });
   if (!m) return `<div class="empty">Nessuna partita in programma. Quando gli organizzatori scelgono i convocati, qui trovi le formazioni da votare.</div>`;
   const counts = m.formations.map((_, i) => [...S.fvotes.values()].filter(c => c === i).length);
   const total = counts.reduce((a, b) => a + b, 0);
@@ -659,12 +749,13 @@ function formationsHTML() {
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
     const chosen = mine === i;
-    h += `<article class="variant${chosen ? " chosen" : ""}">
+    h += `<article class="variant${chosen ? " chosen" : ""}" id="form-${i}">
       <div class="v-head">
         <h3>Formazione ${i + 1}</h3>
         ${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli">Ruoli ${f.req}</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale">Generale ${f.eq}</span>
-        <div class="vbar" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
-        <button class="btn ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
+        <div class="vbar no-shot" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="num">${counts[i]} vot${counts[i] === 1 ? "o" : "i"}</span></div>
+        <button class="btn no-shot ${chosen ? "primary" : ""}" id="fv-${i}" data-act="fvote" data-i="${i}" aria-pressed="${chosen}">${chosen ? "Il tuo voto ✓" : "Vota questa"}</button>
+        <button class="btn sm no-shot shot-btn" id="sh-${i}" data-act="shot" data-i="${i}" ${shotBusy === i ? "disabled" : ""}>${shotLabel(i)}</button>
       </div>
       <div class="teams">${teamBlock("A", f.A, f.sA, f.gA)}${teamBlock("B", f.B, f.sB, f.gB)}</div>
     </article>`;
@@ -863,6 +954,7 @@ document.addEventListener("click", e => {
   else if (a === "logout") signOut(auth);
   else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
   else if (a === "fvote") voteFormation(Number(b.dataset.i));
+  else if (a === "shot") shotFormation(Number(b.dataset.i));
   else if (a === "ask") { S.confirm = b.dataset.key; render(); }
   else if (a === "cancel") { S.confirm = null; render(); }
   else if (a === "toggle") {
