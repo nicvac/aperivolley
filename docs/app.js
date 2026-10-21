@@ -475,20 +475,29 @@ function loadH2I() {
   });
   return h2iPromise;
 }
-function shotLabel(i) {
-  if (shotBusy === i) return "Preparo…";
-  if (pendingShot && pendingShot.i === i) return "Condividi ora";
+function shotLabel(key) {
+  if (shotBusy === key) return "Preparo…";
+  if (pendingShot && pendingShot.key === key) return "Condividi ora";
   return SHOT_MODE === "share" ? "Condividi" : SHOT_MODE === "copy" ? "Copia immagine" : "Scarica immagine";
 }
-async function makeShot(i) {
+// Icona Condividi da mettere in alto a destra di un riquadro con classe "has-shot"
+function shotBtn(key) {
+  const lbl = shotLabel(key);
+  return `<button class="shot-btn no-shot${shotBusy === key ? " busy" : ""}${pendingShot && pendingShot.key === key ? " ready" : ""}" id="sh-${key}" data-act="shot" data-key="${key}" title="${lbl}" aria-label="${lbl}" ${shotBusy === key ? "disabled" : ""}>${SHARE_ICON}</button>`;
+}
+async function makeShot(elId) {
   await loadH2I();
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
-  const el = document.getElementById("form-" + i);
-  if (!el) throw new Error("Formazione non trovata");
+  const el = document.getElementById(elId);
+  if (!el) throw new Error("Riquadro non trovato");
+  // le righe di tabella escluse (es. giocatori a 0 punti) accorciano l'immagine
+  const cut = [...el.querySelectorAll("tr.no-shot, .rrow.no-shot")].reduce((t, r) => t + r.offsetHeight, 0);
   const opts = {
     pixelRatio: Math.max(2, window.devicePixelRatio || 1),
     backgroundColor: getComputedStyle(el).backgroundColor,
-    filter: n => !(n.classList && n.classList.contains("no-shot"))
+    width: el.offsetWidth, height: el.offsetHeight - cut,
+    style: { margin: "0" },
+    filter: n => !(n.classList && n.classList.contains("no-shot"))   // esclude pulsanti, barre voti, righe a 0 punti…
   };
   await window.htmlToImage.toBlob(el, opts);          // primo passaggio: Safari carica i caratteri
   const blob = await window.htmlToImage.toBlob(el, opts);
@@ -501,20 +510,26 @@ function downloadBlob(blob, name) {
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
-async function shotFormation(i) {
-  const name = `aperivolley-formazione-${i + 1}.png`;
+// Bersagli condivisibili: formazione N ("f0", "f1"…) e classifica ("rank")
+function shotTarget(key) {
+  if (key === "rank") return { elId: "rank-card", name: "aperivolley-classifica.png", title: "Classifica AperiVolley" };
+  const i = Number(key.slice(1));
+  return { elId: "form-" + i, name: `aperivolley-formazione-${i + 1}.png`, title: `Formazione ${i + 1}` };
+}
+async function shoot(key) {
+  const { elId, name, title } = shotTarget(key);
   // secondo tocco dopo un blocco del browser: condivide l'immagine già pronta
-  if (pendingShot && pendingShot.i === i) {
+  if (pendingShot && pendingShot.key === key) {
     const f = pendingShot.file; pendingShot = null; render();
-    try { await navigator.share({ files: [f], title: `Formazione ${i + 1}` }); }
+    try { await navigator.share({ files: [f], title }); }
     catch (e) { if (e.name !== "AbortError") { downloadBlob(f, name); flash("Condivisione non disponibile: immagine scaricata.", "warn"); } }
     return;
   }
-  shotBusy = i; render();
+  shotBusy = key; render();
   try {
     if (SHOT_MODE === "copy") {
       // la promessa va passata subito a ClipboardItem: Safari lo richiede
-      const blobP = makeShot(i);
+      const blobP = makeShot(elId);
       try {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blobP })]);
         flash("Immagine copiata: incollala nella chat (Ctrl+V o Cmd+V).", "ok");
@@ -523,14 +538,14 @@ async function shotFormation(i) {
         flash("Copia non consentita dal browser: immagine scaricata.", "warn");
       }
     } else if (SHOT_MODE === "share") {
-      const file = new File([await makeShot(i)], name, { type: "image/png" });
-      try { await navigator.share({ files: [file], title: `Formazione ${i + 1}` }); }
+      const file = new File([await makeShot(elId)], name, { type: "image/png" });
+      try { await navigator.share({ files: [file], title }); }
       catch (e) {
-        if (e.name === "NotAllowedError") { pendingShot = { i, file }; flash("Immagine pronta: tocca di nuovo «Condividi ora».", "ok"); }
+        if (e.name === "NotAllowedError") { pendingShot = { key, file }; flash("Immagine pronta: tocca di nuovo «Condividi ora».", "ok"); }
         else if (e.name !== "AbortError") { downloadBlob(file, name); flash("Condivisione non disponibile: immagine scaricata.", "warn"); }
       }
     } else {
-      downloadBlob(await makeShot(i), name);
+      downloadBlob(await makeShot(elId), name);
       flash("Immagine scaricata.", "ok");
     }
   } catch (e) { flash("Immagine non creata: " + (e.message || "errore"), "warn"); }
@@ -751,7 +766,7 @@ function formationsHTML() {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
     const chosen = mine === i;
     h += `<article class="variant has-shot${chosen ? " chosen" : ""}" id="form-${i}">
-      <button class="shot-btn no-shot${shotBusy === i ? " busy" : ""}${pendingShot && pendingShot.i === i ? " ready" : ""}" id="sh-${i}" data-act="shot" data-i="${i}" title="${shotLabel(i)}" aria-label="${shotLabel(i)}" ${shotBusy === i ? "disabled" : ""}>${SHARE_ICON}</button>
+      ${shotBtn("f" + i)}
       <div class="v-head">
         <h3>Formazione ${i + 1}</h3>
         ${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli">Ruoli ${f.req}</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale">Generale ${f.eq}</span>
@@ -771,14 +786,19 @@ function rankingHTML() {
   const rows = ranking();
   const played = S.matches.filter(m => m.status === "played").length;
   if (!rows.length) return `<div class="empty">Nessun giocatore nel roster.</div>`;
-  let h = `<div class="sec-head"><h2>Classifica</h2><span class="meta num">${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}</span></div>
-  <p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite.</p>
-  <div class="tbl-wrap"><table class="rank">
-    <thead><tr><th>#</th><th>Giocatore</th><th class="r">Punti</th><th class="r">Giocate</th><th class="r">Vinte</th><th class="r">% vittorie</th></tr></thead><tbody>`;
+  const lastPlayed = Math.max(0, ...S.matches.filter(m => m.status === "played").map(m => m.playedAt || 0));
+  const partite = `${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}`;
+  if (rows.some(r => r.pts > 0)) loadH2I().catch(() => { });
+  let h = `<p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine da condividere compaiono solo i giocatori con almeno un punto.</p>
+  <section class="rank-card has-shot" id="rank-card">
+    ${rows.some(r => r.pts > 0) ? shotBtn("rank") : ""}
+    <div class="rank-head"><h2>Classifica</h2><span class="meta num">${partite}${lastPlayed ? ` · aggiornata al ${fmtDate(lastPlayed)}` : ""}</span></div>
+    <div class="rank-grid" role="table" aria-label="Classifica">
+      <div class="rrow rhead" role="row"><span role="columnheader">#</span><span role="columnheader">Giocatore</span><span class="r" role="columnheader">Punti</span><span class="r" role="columnheader">Giocate</span><span class="r" role="columnheader">Vinte</span><span class="r" role="columnheader">% vitt.</span></div>`;
   for (const r of rows) {
-    h += `<tr class="${r.pos <= 3 && r.pts > 0 ? "podium" : ""}${r.g === 0 ? " zero" : ""}"><td class="num">${r.pos}</td><td>${esc(r.name)}</td><td class="r num pts">${r.pts}</td><td class="r num">${r.g}</td><td class="r num">${r.v}</td><td class="r num">${r.g ? Math.round(r.pct * 100) + "%" : "–"}</td></tr>`;
+    h += `<div class="rrow${r.pos <= 3 && r.pts > 0 ? " podium" : ""}${r.g === 0 ? " zero" : ""}${r.pts === 0 ? " no-shot" : ""}" role="row"><span class="num" role="cell">${r.pos}</span><span class="nm" role="cell">${esc(r.name)}</span><span class="r num pts" role="cell">${r.pts}</span><span class="r num" role="cell">${r.g}</span><span class="r num" role="cell">${r.v}</span><span class="r num" role="cell">${r.g ? Math.round(r.pct * 100) + "%" : "–"}</span></div>`;
   }
-  return h + `</tbody></table></div>`;
+  return h + `</div></section>`;
 }
 
 /* ---------- Admin: Partita ---------- */
@@ -957,7 +977,7 @@ document.addEventListener("click", e => {
   else if (a === "logout") signOut(auth);
   else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
   else if (a === "fvote") voteFormation(Number(b.dataset.i));
-  else if (a === "shot") shotFormation(Number(b.dataset.i));
+  else if (a === "shot") shoot(b.dataset.key);
   else if (a === "ask") { S.confirm = b.dataset.key; render(); }
   else if (a === "cancel") { S.confirm = null; render(); }
   else if (a === "toggle") {

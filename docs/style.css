@@ -160,7 +160,7 @@ textarea.field{min-height:120px;resize:vertical;font:inherit}
 .v-head .btn{margin-left:auto}
 
 .tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
-table.rank{width:100%;border-collapse:collapse;font-size:15px}
+table.rank{width:100%;border-collapse:separate;border-spacing:0;font-size:15px}
 .rank th{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.05em;font-size:14px;color:var(--muted);text-align:left;padding:10px 14px;border-bottom:2px solid var(--line)}
 .rank td{padding:9px 14px;border-bottom:1px solid var(--line)}
 .rank tr:last-child td{border-bottom:0}
@@ -203,7 +203,7 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 .v-head .eq{font-size:14px;padding:2px 8px;white-space:nowrap}
 .vbar{flex:0 1 120px;min-width:80px;max-width:120px;gap:6px;font-size:12px;white-space:nowrap}
 /* icona condividi in alto a destra della scheda */
-.variant.has-shot{position:relative}
+.has-shot{position:relative}
 .variant.has-shot .v-head{padding-right:52px}
 .shot-btn{position:absolute;top:8px;right:10px;width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--accent);padding:0;z-index:1}
 .shot-btn svg{width:22px;height:22px}
@@ -222,4 +222,29 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
   .v-head .btn{padding:5px 12px;font-size:13px}
   .vbar{flex:1 1 auto;max-width:150px}
   .shot-btn{top:5px;right:6px}
+}
+
+/* classifica come riquadro condivisibile */
+.rank-card{background:var(--surface);border:2px solid var(--frame);border-radius:var(--r);overflow:hidden;margin-top:14px}
+.rank-head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding:10px 14px;background:var(--frame-soft);border-bottom:2px solid var(--frame)}
+.rank-head h2{font-size:22px;text-transform:uppercase}
+.rank-card.has-shot .rank-head{padding-right:52px}
+.rank-card .tbl-wrap{border:0;border-radius:0}
+
+/* classifica a griglia (si copia in immagine senza deformazioni) */
+.rank-grid{font-size:15px}
+.rrow{display:grid;grid-template-columns:40px minmax(0,1fr) 64px 76px 60px 76px;column-gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid var(--line)}
+.rrow:last-child{border-bottom:0}
+.rrow .r{text-align:right}
+.rrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rhead{border-bottom:2px solid var(--line)}
+.rhead span{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.05em;font-size:14px;color:var(--muted);font-weight:600}
+.rrow .pts{font-family:var(--f-display);font-size:20px;font-weight:700}
+.rrow.podium .pts{color:var(--accent)}
+.rrow.zero span{color:var(--muted)}
+@media (max-width:560px){
+  .rank-grid{font-size:14px}
+  .rrow{grid-template-columns:26px minmax(0,1fr) 44px 50px 42px 50px;column-gap:6px;padding:8px 10px}
+  .rhead span{font-size:11px;letter-spacing:.02em}
+  .rrow .pts{font-size:18px}
 }
