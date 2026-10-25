@@ -248,3 +248,11 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
   .rhead span{font-size:11px;letter-spacing:.02em}
   .rrow .pts{font-size:18px}
 }
+
+/* vista Vota: ordinamento */
+.sortbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px}
+.sortbar .meta{margin-right:4px}
+.sortchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:13px;color:var(--muted)}
+.sortchip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.vcard{will-change:transform}
+.skill.sorted .lbl{color:var(--accent)}

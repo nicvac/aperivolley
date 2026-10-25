@@ -37,6 +37,7 @@ const S = {
   players: [], my: {}, dirty: false, saving: false, saveTimer: null,
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
+  voteSort: "all", voteOrder: null, voteStale: true, reorderTimer: null,
   sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "",
   failed: "", loginErr: "",
@@ -67,6 +68,8 @@ function readView() {
   return all.includes(p) ? p : "vota";
 }
 function go(view) {
+  if (S.reorderTimer) { clearTimeout(S.reorderTimer); S.reorderTimer = null; }
+  S.voteStale = true;
   S.view = view; S.confirm = null;
   try { history.pushState(null, "", "?p=" + view); } catch (_) { }
   render(); window.scrollTo(0, 0);
@@ -141,10 +144,11 @@ function subscribe() {
   const uid = S.uid;
   S.unsubs.push(onSnapshot(collection(db, "players"), snap => {
     S.players = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+    if (!S.reorderTimer) S.voteStale = true;
     render();
   }, onErr));
   S.unsubs.push(onSnapshot(doc(db, "votes", uid), snap => {
-    if (!S.dirty && !S.saving) S.my = clone(snap.exists() ? snap.data().ratings : {});
+    if (!S.dirty && !S.saving) { S.my = clone(snap.exists() ? snap.data().ratings : {}); if (!S.reorderTimer) S.voteStale = true; }
     render();
   }, onErr));
   S.unsubs.push(onSnapshot(doc(db, "config", "state"), snap => {
@@ -211,7 +215,57 @@ function rate(pid, k, v) {
   S.dirty = true;
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(saveVotes, 600);
+  clearTimeout(S.reorderTimer);
+  S.reorderTimer = setTimeout(applyReorder, 2000);   // la scheda resta ferma 2 s, poi si ricolloca
   render();
+}
+
+/* ---------- Ordinamento della vista Vota (sui voti personali di chi guarda) ---------- */
+function myOverall(pid) {
+  const r = S.my[pid] || {};
+  const vals = SKILLS.map(({ k }) => Number(r[k])).filter(v => v >= 1 && v <= 5);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+function computeVoteOrder() {
+  const key = p => S.voteSort === "all" ? myOverall(p.id) : (Number((S.my[p.id] || {})[S.voteSort]) || null);
+  const desc = (a, b) => (a == null) - (b == null) || (b ?? 0) - (a ?? 0);   // non votati in fondo
+  return S.players.slice().sort((a, b) =>
+    desc(key(a), key(b)) || desc(myOverall(a.id), myOverall(b.id)) || byName(a, b)
+  ).map(p => p.id);
+}
+function currentVoteOrder() {
+  const ids = new Set(S.players.map(p => p.id));
+  if (S.voteStale || !S.voteOrder) { S.voteOrder = computeVoteOrder(); S.voteStale = false; }
+  const order = S.voteOrder.filter(id => ids.has(id));
+  S.players.forEach(p => { if (!order.includes(p.id)) order.push(p.id); });   // giocatori nuovi in coda
+  return order;
+}
+// Ricollocazione animata (tecnica FLIP): misura, riordina, poi fa scivolare le schede
+function applyReorder() {
+  clearTimeout(S.reorderTimer); S.reorderTimer = null;
+  if (S.view !== "vota") { S.voteStale = true; return; }
+  const before = new Map([...document.querySelectorAll(".vcard")].map(e => [e.dataset.pid, e.getBoundingClientRect()]));
+  S.voteOrder = computeVoteOrder(); S.voteStale = false;
+  render();
+  const moved = [];
+  document.querySelectorAll(".vcard").forEach(e => {
+    const b = before.get(e.dataset.pid); if (!b) return;
+    const a = e.getBoundingClientRect();
+    const dx = b.left - a.left, dy = b.top - a.top;
+    if (!dx && !dy) return;
+    e.style.transition = "none";
+    e.style.transform = `translate(${dx}px, ${dy}px)`;
+    e.style.zIndex = "2";
+    moved.push(e);
+  });
+  if (!moved.length) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    moved.forEach(e => {
+      e.style.transition = "transform .7s cubic-bezier(.2,.75,.2,1)";
+      e.style.transform = "";
+      e.addEventListener("transitionend", () => { e.style.transition = ""; e.style.zIndex = ""; }, { once: true });
+    });
+  }));
 }
 async function saveVotes() {
   if (S.saving) { S.saveTimer = setTimeout(saveVotes, 400); return; }
@@ -722,14 +776,23 @@ function loginHTML() {
 function voteHTML() {
   if (!S.players.length) return `<div class="empty">Nessun giocatore nel roster.${isAdmin() ? ` Aggiungili dal pannello <a href="?p=roster" data-nav="roster">Roster</a>.` : ""}</div>`;
   const done = S.players.filter(p => SKILLS.every(({ k }) => S.my[p.id] && S.my[p.id][k])).length;
-  let h = `<div class="sec-head"><h2>Vota le skill</h2><span class="meta num">Completati ${done} su ${S.players.length}</span></div><div class="grid">`;
-  for (const p of S.players) {
+  const byId = new Map(S.players.map(p => [p.id, p]));
+  const sorts = [["all", "Complessivo"], ...SKILLS.map(({ k, l }) => [k, l])];
+  let h = `<div class="sec-head"><h2>Vota le skill</h2><span class="meta num">Completati ${done} su ${S.players.length}</span></div>
+  <div class="sortbar" role="group" aria-label="Ordina per">
+    <span class="meta">Ordina per</span>
+    ${sorts.map(([k, l]) => `<button class="sortchip" id="vs-${k}" data-act="vsort" data-k="${k}" aria-pressed="${S.voteSort === k}">${l}</button>`).join("")}
+  </div>
+  <p class="note">L'ordine segue i tuoi voti, dal più alto al più basso; a parità conta il tuo giudizio complessivo. Chi non hai ancora votato è in fondo.</p>
+  <div class="grid">`;
+  for (const id of currentVoteOrder()) {
+    const p = byId.get(id); if (!p) continue;
     const mine = S.my[p.id] || {};
     const n = SKILLS.filter(({ k }) => mine[k]).length;
-    h += `<article class="card">
+    h += `<article class="card vcard" data-pid="${p.id}">
       <div class="card-h"><h3>${esc(p.name)}</h3><span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
     for (const { k, l } of SKILLS) {
-      h += `<div class="skill"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
+      h += `<div class="skill${S.voteSort === k ? " sorted" : ""}"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
       for (let v = 1; v <= 5; v++) {
         h += `<button class="star${v <= (mine[k] || 0) ? " on" : ""}" id="st-${p.id}-${k}-${v}" data-act="rate" data-pid="${p.id}" data-k="${k}" data-v="${v}" aria-label="${l}: ${v} stell${v > 1 ? "e" : "a"}" aria-pressed="${v === mine[k]}">${STAR}</button>`;
       }
@@ -976,6 +1039,7 @@ document.addEventListener("click", e => {
   if (a === "login") login();
   else if (a === "logout") signOut(auth);
   else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
+  else if (a === "vsort") { if (S.voteSort !== b.dataset.k) { S.voteSort = b.dataset.k; applyReorder(); } }
   else if (a === "fvote") voteFormation(Number(b.dataset.i));
   else if (a === "shot") shoot(b.dataset.key);
   else if (a === "ask") { S.confirm = b.dataset.key; render(); }
