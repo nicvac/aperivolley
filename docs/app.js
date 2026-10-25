@@ -791,7 +791,8 @@ function voteHTML() {
     const n = SKILLS.filter(({ k }) => mine[k]).length;
     h += `<article class="card vcard" data-pid="${p.id}">
       <div class="card-h"><h3>${esc(p.name)}</h3><span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
-    for (const { k, l } of SKILLS) {
+    const shown = S.voteSort === "all" ? SKILLS : SKILLS.filter(({ k }) => k === S.voteSort);   // con una skill scelta si vede solo quella
+    for (const { k, l } of shown) {
       h += `<div class="skill${S.voteSort === k ? " sorted" : ""}"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
       for (let v = 1; v <= 5; v++) {
         h += `<button class="star${v <= (mine[k] || 0) ? " on" : ""}" id="st-${p.id}-${k}-${v}" data-act="rate" data-pid="${p.id}" data-k="${k}" data-v="${v}" aria-label="${l}: ${v} stell${v > 1 ? "e" : "a"}" aria-pressed="${v === mine[k]}">${STAR}</button>`;
