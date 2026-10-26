@@ -36,6 +36,7 @@ const S = {
   players: [], my: {}, dirty: false, saving: false, saveTimer: null,
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
+  genN: 20,
   voteSort: "all", voteOrder: null, voteStale: true, reorderTimer: null,
   sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "",
@@ -369,7 +370,8 @@ function toFormation(Aids, Bids, avg) {
   3. Spareggio: 0,4 × Δ media globale + 0,4 × Δ medio skill + 0,2 × Δ skill più sbilanciata.
   Opzioni: cons = vincoli [{a, b, same}] da rispettare; exclude = chiavi già presenti; count = quante.
 */
-const DRAFT_BATCH = 20;
+const DRAFT_BATCH = 20;     // valore iniziale del campo "quante proposte"
+const genCount = () => Math.max(1, Math.min(500, parseInt(S.genN, 10) || DRAFT_BATCH));
 function satisfies(A, B, cons) {
   if (!cons || !cons.length) return true;
   const inA = new Set(A), all = new Set([...A, ...B]);
@@ -380,7 +382,7 @@ function splitKey(A, B) {
   const anchor = [...A, ...B].sort()[0];
   return (A.includes(anchor) ? A : B).slice().sort().join(",");
 }
-function generate(sel, avg, { cons = [], exclude = new Set(), count = DRAFT_BATCH } = {}) {
+function generate(sel, avg, { cons = [], exclude = new Set(), count = genCount() } = {}) {
   const n = sel.length, h = n / 2;
   const res = [], idx = [0];
   const rec = start => {
@@ -962,7 +964,7 @@ function draftHTML() {
     </div>
     ${d.cons.length ? `<div class="chips">${d.cons.map((c, i) => `<span class="cons-chip">${esc(pName(c.a))} <b>${c.same ? "con" : "non con"}</b> ${esc(pName(c.b))}<button class="linkbtn" id="cons-rm-${i}" data-act="consrm" data-i="${i}" aria-label="Rimuovi vincolo">✕</button></span>`).join("")}</div>` : `<span class="meta">Nessun vincolo: tutte le condizioni vanno rispettate insieme (E).</span>`}
     <div class="manage-row">
-      <button class="btn primary" id="gen-more" data-act="genmore">Genera altre ${DRAFT_BATCH} proposte${d.cons.length ? " con questi vincoli" : ""}</button>
+      <span class="gen-ctl"><button class="btn primary" id="gen-more" data-act="genmore">Genera altre</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte${d.cons.length ? " con questi vincoli" : ""}</span></span>
       <label class="check"><input type="checkbox" id="filter-on" ${d.filterOn ? "checked" : ""} ${d.cons.length ? "" : "disabled"}> Mostra solo le proposte che rispettano i vincoli</label>
     </div>
     <strong>Elenco</strong>
@@ -975,7 +977,7 @@ function draftHTML() {
   </div>
   <p class="note">Sposta i giocatori con → A / → B, riordina le proposte con ↑ ↓ e spunta <b>Pubblica</b> su quelle da mettere ai voti: si pubblicano nell'ordine dell'elenco. Totali, Ruoli e Generale sono su 10. Le squadre da pubblicare devono avere lo stesso numero di giocatori. Se ricarichi la pagina la bozza si perde.</p>
   <div class="variants">`;
-  if (!vis.length) h += `<div class="empty">Nessuna proposta rispetta i vincoli. Prova «Genera altre ${DRAFT_BATCH} proposte con questi vincoli».</div>`;
+  if (!vis.length) h += `<div class="empty">Nessuna proposta rispetta i vincoli. Prova «Genera altre proposte» con questi vincoli.</div>`;
   vis.forEach((it, vi) => {
     const f = toFormation(it.A, it.B, d.avg);
     const changed = !sameSet(it.A, it.oA) || !sameSet(it.B, it.oB);
@@ -1073,7 +1075,7 @@ function matchAdminHTML() {
     <div class="bar"><button class="btn" id="sel-none" data-act="sel-none">Svuota</button><button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button></div>
     <div class="chips">${S.players.map(p => `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${set.has(p.id)}"><span class="dot"></span>${esc(p.name)}</button>`).join("")}</div>
     <div class="manage-row" style="margin-top:16px">
-      <button class="btn primary" id="gen" data-act="gendraft" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : `Genera ${DRAFT_BATCH} proposte`}</button>
+      <span class="gen-ctl"><button class="btn primary" id="gen" data-act="gendraft" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : "Genera"}</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte</span></span>
       <span class="meta">${ok ? `Le proposte si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"} (dove manca un voto si usa ${FALLBACK}). Prima di pubblicarle potrai modificarle.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
     </div>`;
   }
@@ -1195,6 +1197,7 @@ $view.addEventListener("change", e => {
   else if (t.id === "cons-b") { S.draft.consB = t.value; render(); }
   else if (t.id === "cons-rel") { S.draft.consRel = t.value; render(); }
   else if (t.id === "filter-on") { S.draft.filterOn = t.checked; render(); }
+  else if (t.id === "gen-n") { S.genN = t.value; }
   else if (t.id === "div-n") { S.draft.divN = Math.max(2, parseInt(t.value, 10) || 2); }
 });
 $view.addEventListener("input", e => {

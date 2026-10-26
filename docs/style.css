@@ -282,3 +282,5 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 .vbar{flex:0 1 210px;max-width:210px}
 .vbar .track{min-width:60px;flex:1}
 @media (max-width:640px){.vbar{flex:1 1 auto;max-width:220px}}
+.gen-ctl{display:inline-flex;gap:6px;align-items:center}
+.gen-ctl .field{width:72px;flex:none}
