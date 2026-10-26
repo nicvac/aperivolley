@@ -886,7 +886,7 @@ function teamBlock(side, ids, stats, g) {
 const eqClass = e => e >= 90 ? "g" : e >= 75 ? "w" : "b";
 const dec = x => ((Number(x) || 0) / 10).toFixed(1).replace(".", ",");   // 100% → 10,0
 
-const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${stats[k] || 0}%</span></div>`).join("");
+const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${dec(stats[k])}</span></div>`).join("");
 
 function formationsHTML() {
   const m = currentMatch();
@@ -896,7 +896,7 @@ function formationsHTML() {
   const total = counts.reduce((a, b) => a + b, 0);
   const mine = S.fvotes.get(S.uid);
   let h = `<div class="sec-head"><h2>Formazioni</h2><span class="meta num">Partita del ${fmtDate(m.createdAt)} · ${m.selected.length} convocati · ${total} vot${total === 1 ? "o" : "i"}</span></div>
-  <p class="note">Le formazioni sono nell'ordine scelto dagli organizzatori. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Le barre sono relative: la skill più alta tra le due squadre vale 100% e le altre sono in proporzione; nel totale la squadra più forte vale 10 e Ruoli e Generale sono su 10.</p>
+  <p class="note">Le formazioni sono nell'ordine scelto dagli organizzatori. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Tutti i valori sono su 10 e relativi: la skill più alta tra le due squadre vale 10 e le altre sono in proporzione; nel totale la squadra più forte vale 10.</p>
   <div class="variants">`;
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
