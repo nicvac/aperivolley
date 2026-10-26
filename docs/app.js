@@ -888,7 +888,7 @@ function teamBlock(side, ids, stats, g) {
   </section>`;
 }
 const eqClass = e => e >= 95 ? "g" : e >= 90 ? "w" : "b";      // verde ≥ 95% · giallo 90–94% · rosso < 90%
-const balHTML = f => `<span class="bal"><span class="bal-lbl">Equilibrio:</span>${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli: i migliori di ogni skill sono divisi tra le squadre">ruoli ${f.req}%</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio di forza: le squadre si equivalgono">forza ${f.eq}%</span></span>`;
+const balHTML = f => `<span class="bal" role="group" aria-label="Equilibrio"><span class="bal-lbl">Equilibrio</span>${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli: i migliori di ogni skill sono divisi tra le squadre">ruoli ${f.req}%</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio di forza: le squadre si equivalgono">forza ${f.eq}%</span></span>`;
 const dec = x => ((Number(x) || 0) / 10).toFixed(1).replace(".", ",");   // 100% → 10,0
 
 const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${dec(stats[k])}</span></div>`).join("");
