@@ -41,6 +41,10 @@ onAuthStateChanged(auth, async user => {
 
 /* ---------- Analisi ---------- */
 const isRel = f => f && f.rel === true;
+const isNewBal = f => f && f.bal === 2;
+// vecchia scala: s = 100·(1 − x), con 0 come minimo → x = 1 − s/100 (se s = 0, x ≥ 1: si usa 1)
+const oldToNewBal = s => s == null ? s : Math.max(0, Math.min(100, Math.round(100 - 25 * (1 - Number(s) / 100))));
+const needsFix = f => !isRel(f) || !isNewBal(f);
 async function scan() {
   S.busy = true; render();
   try {
@@ -51,7 +55,7 @@ async function scan() {
     ]);
     const pids = new Set(players.docs.map(d => d.id));
     const ms = matches.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
-    const toConvert = ms.filter(m => Array.isArray(m.formations) && m.formations.some(f => !isRel(f)));
+    const toConvert = ms.filter(m => Array.isArray(m.formations) && m.formations.some(needsFix));
     const playedWithFormations = ms.filter(m => m.status === "played" && m.formations);
     const cur = state.exists() ? state.data().currentMatch : null;
     const curMatch = cur ? ms.find(m => m.id === cur) : null;
@@ -78,9 +82,13 @@ async function align() {
     const b = writeBatch(db);
     let ops = 0;
     for (const m of sc.toConvert) {
-      const formations = m.formations.map(f => isRel(f) ? f : { ...f, ...toRelative(f) });
+      const formations = m.formations.map(f => {
+        let g = isRel(f) ? f : { ...f, ...toRelative(f) };
+        if (!isNewBal(g)) g = { ...g, req: oldToNewBal(g.req), eq: oldToNewBal(g.eq), bal: 2 };
+        return g;
+      });
       b.update(m.ref, { formations }); ops++;
-      log.push(`Partita ${m.id}: ${m.formations.filter(f => !isRel(f)).length} formazioni convertite in percentuale.`);
+      log.push(`Partita ${m.id}: ${m.formations.filter(needsFix).length} formazioni aggiornate (valori relativi e nuova scala dell'equilibrio).`);
     }
     for (const m of sc.playedWithFormations) {
       b.update(m.ref, { formations: deleteField() }); ops++;
@@ -147,7 +155,7 @@ function readyHTML() {
   if (!sc) return `<div class="empty">${S.busy ? "Analisi del database…" : "Nessun dato."}</div>`;
   const c = sc.counts;
   const issues = [];
-  if (sc.toConvert.length) issues.push(`${sc.toConvert.length} partit${sc.toConvert.length === 1 ? "a ha" : "e hanno"} formazioni con valori assoluti da convertire in percentuale.`);
+  if (sc.toConvert.length) issues.push(`${sc.toConvert.length} partit${sc.toConvert.length === 1 ? "a ha" : "e hanno"} formazioni da aggiornare (valori assoluti o vecchia scala dell'equilibrio).`);
   if (sc.playedWithFormations.length) issues.push(`${sc.playedWithFormations.length} partite giocate conservano ancora le statistiche delle formazioni.`);
   if (sc.week.length) issues.push(`${sc.week.length} documenti della vecchia collezione "week" (prima versione dell'app).`);
   if (sc.dangling) issues.push("Il riferimento alla partita in corso punta a una partita inesistente o già chiusa.");
@@ -169,7 +177,7 @@ function readyHTML() {
     ${issues.length
       ? `<strong class="issue">Da sistemare</strong><ul>${issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`
       : `<strong class="okc">Il database è coerente.</strong>`}
-    <span class="meta">Converte in percentuale le formazioni salvate con valori assoluti (la skill più alta = 100%), toglie le statistiche dalle partite già giocate, elimina i dati della prima versione e corregge riferimenti non validi. Voti, giocatori, utenti e risultati non vengono toccati.</span>
+    <span class="meta">Converte in percentuale le formazioni salvate con valori assoluti (la skill più alta = 100%), porta l'equilibrio (ruoli e forza) alla nuova scala percentuale lineare, toglie le statistiche dalle partite già giocate, elimina i dati della prima versione e corregge riferimenti non validi. Voti, giocatori, utenti e risultati non vengono toccati.</span>
     <div class="manage-row"><button class="btn primary" id="align" ${issues.length && !S.busy ? "" : "disabled"}>Allinea il database</button></div>
     ${S.log ? `<pre class="log">${esc(S.log)}</pre>` : ""}
   </div>

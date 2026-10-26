@@ -284,3 +284,8 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 @media (max-width:640px){.vbar{flex:1 1 auto;max-width:220px}}
 .gen-ctl{display:inline-flex;gap:6px;align-items:center}
 .gen-ctl .field{width:72px;flex:none}
+
+/* Equilibrio: ruoli · forza */
+.bal{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.bal-lbl{font-size:13px;color:var(--muted);font-weight:600}
+@media (max-width:640px){.bal-lbl{font-size:12px}}

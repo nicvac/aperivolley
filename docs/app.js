@@ -319,7 +319,9 @@ function playerAverages() {
 const ROLE_GATE = 0.25;
 const TOP_PER_ROLE = 2;
 const r1 = x => Math.round(x * 10) / 10;
-const score01 = x => Math.max(0, Math.round(100 * (1 - x)));
+// Equilibrio in percentuale, lineare: squilibrio x in stelle (0..4) → 100·(4 − x)/4
+const balPct = x => Math.max(0, Math.min(100, Math.round(100 * (4 - x) / 4)));
+const BAL_SCALE = 2;   // versione della scala salvata nelle formazioni (2 = percentuale lineare)
 
 // Valori di un giocatore (con FALLBACK dove manca il voto)
 function playerVals(avg, pid) {
@@ -356,7 +358,7 @@ function toFormation(Aids, Bids, avg) {
   return {
     A: sortIdsByName(Aids), B: sortIdsByName(Bids),
     sA: statsOf(e.mA), sB: statsOf(e.mB), gA: r1(e.gA), gB: r1(e.gB),
-    req: score01(e.role), eq: score01(e.cost),
+    req: balPct(e.role), eq: balPct(e.cost), bal: BAL_SCALE,
     _role: e.role, _cost: e.cost
   };
 }
@@ -885,7 +887,8 @@ function teamBlock(side, ids, stats, g) {
     <div class="tstats">${statRows(stats)}</div>
   </section>`;
 }
-const eqClass = e => e >= 90 ? "g" : e >= 75 ? "w" : "b";
+const eqClass = e => e >= 95 ? "g" : e >= 90 ? "w" : "b";      // verde ≥ 95% · giallo 90–94% · rosso < 90%
+const balHTML = f => `<span class="bal"><span class="bal-lbl">Equilibrio:</span>${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli: i migliori di ogni skill sono divisi tra le squadre">ruoli ${f.req}%</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio di forza: le squadre si equivalgono">forza ${f.eq}%</span></span>`;
 const dec = x => ((Number(x) || 0) / 10).toFixed(1).replace(".", ",");   // 100% → 10,0
 
 const statRows = stats => SKILLS.map(({ k, l }) => `<div class="ts"><span class="lbl">${l}</span><div class="track"><b style="width:${stats[k] || 0}%"></b></div><span class="num v">${dec(stats[k])}</span></div>`).join("");
@@ -898,7 +901,7 @@ function formationsHTML() {
   const total = counts.reduce((a, b) => a + b, 0);
   const mine = S.fvotes.get(S.uid);
   let h = `<div class="sec-head"><h2>Formazioni</h2><span class="meta num">Partita del ${fmtDate(m.createdAt)} · ${m.selected.length} convocati · ${total} vot${total === 1 ? "o" : "i"}</span></div>
-  <p class="note">Le formazioni sono nell'ordine scelto dagli organizzatori. <b>Ruoli</b> indica quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte); <b>Generale</b> quanto si equivalgono le squadre nel complesso. Tutti i valori sono su 10 e relativi: la skill più alta tra le due squadre vale 10 e le altre sono in proporzione; nel totale la squadra più forte vale 10.</p>
+  <p class="note">Le formazioni sono nell'ordine scelto dagli organizzatori. <b>Equilibrio</b>: <b>ruoli</b> dice quanto sono divisi tra le due squadre i migliori di ogni skill (per esempio i due attaccanti più forti uno per parte), <b>forza</b> quanto le squadre si equivalgono nel complesso; 100% = perfetto, verde dal 95%, giallo dal 90%, rosso sotto. Totali e skill sono su 10 e relativi: la skill più alta tra le due squadre vale 10 e le altre sono in proporzione; nel totale la squadra più forte vale 10.</p>
   <div class="variants">`;
   m.formations.forEach((f, i) => {
     const pct = total ? Math.round(counts[i] / total * 100) : 0;
@@ -907,7 +910,7 @@ function formationsHTML() {
       ${shotBtn("f" + i)}
       <div class="v-head">
         <h3>Formazione ${i + 1}</h3>
-        ${f.req != null ? `<span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli (su 10)">Ruoli ${dec(f.req)}</span>` : ""}<span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale (su 10)">Generale ${dec(f.eq)}</span>
+        ${balHTML(f)}
         ${chosen ? `<span class="mine-badge no-shot">✓ Il tuo voto</span>` : ""}
         <span class="vh-break" aria-hidden="true"></span>
         <div class="vbar no-shot" title="${counts[i]} voti"><div class="track"><b style="width:${pct}%"></b></div><span class="vcount num"><b>${counts[i]}</b> vot${counts[i] === 1 ? "o" : "i"}${total ? ` · ${pct}%` : ""}</span></div>
@@ -975,7 +978,7 @@ function draftHTML() {
       ${d.highlight.size ? `<button class="btn" id="hl-pub" data-act="hlpub">Spunta le evidenziate</button><button class="btn" id="hl-clear" data-act="hlclear">Togli evidenziazione</button>` : ""}
     </div>
   </div>
-  <p class="note">Sposta i giocatori con → A / → B, riordina le proposte con ↑ ↓ e spunta <b>Pubblica</b> su quelle da mettere ai voti: si pubblicano nell'ordine dell'elenco. Totali, Ruoli e Generale sono su 10. Le squadre da pubblicare devono avere lo stesso numero di giocatori. Se ricarichi la pagina la bozza si perde.</p>
+  <p class="note">Sposta i giocatori con → A / → B, riordina le proposte con ↑ ↓ e spunta <b>Pubblica</b> su quelle da mettere ai voti: si pubblicano nell'ordine dell'elenco. Totali e skill sono su 10; l'equilibrio (ruoli e forza) è in percentuale: verde dal 95%, giallo dal 90%, rosso sotto. Le squadre da pubblicare devono avere lo stesso numero di giocatori. Se ricarichi la pagina la bozza si perde.</p>
   <div class="variants">`;
   if (!vis.length) h += `<div class="empty">Nessuna proposta rispetta i vincoli. Prova «Genera altre proposte» con questi vincoli.</div>`;
   vis.forEach((it, vi) => {
@@ -987,8 +990,7 @@ function draftHTML() {
       <div class="v-head">
         <label class="check pubcheck"><input type="checkbox" id="pub-${it.id}" data-act="dpub" data-id="${it.id}" ${it.pub ? "checked" : ""}> Pubblica</label>
         <h3>Proposta ${pos}</h3>
-        <span class="eq ${eqClass(f.req)} num" title="Equilibrio dei ruoli (su 10)">Ruoli ${dec(f.req)}</span>
-        <span class="eq ${eqClass(f.eq)} num" title="Equilibrio generale (su 10)">Generale ${dec(f.eq)}</span>
+        ${balHTML(f)}
         ${d.highlight.has(it.id) ? `<span class="pill hl-pill">Più diversa</span>` : ""}
         ${uneven ? `<span class="pill part">Squadre dispari: ${it.A.length} contro ${it.B.length}</span>` : changed ? `<span class="pill adm">Modificata</span>` : ""}
         <span class="v-tools">
@@ -1027,7 +1029,7 @@ function matchAdminHTML() {
     <div class="card"><strong>1. Formazione di partenza</strong><span class="meta">Di solito la più votata.</span><div class="radio-list">`;
     m.formations.forEach((f, i) => {
       h += `<label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
-        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · ruoli ${f.req != null ? dec(f.req) : "–"} · generale ${dec(f.eq)}<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
+        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · equilibrio: ruoli ${f.req != null ? f.req + "%" : "–"} · forza ${f.eq}%<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
     });
     ensureFinal(m);
     const f = m.formations[S.played];
