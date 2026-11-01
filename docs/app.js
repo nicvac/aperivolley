@@ -37,7 +37,7 @@ const S = {
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
   genN: 20,
-  voteSort: "all", voteOrder: null, voteStale: true, votePending: new Set(),
+  voteSort: "all", voteOrder: null, voteStale: true, votePending: new Set(), unsavedPids: new Set(), savedPids: new Set(), savedTimer: null,
   sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "",
   failed: "", loginErr: "",
@@ -216,6 +216,7 @@ function rate(pid, k, v) {
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(saveVotes, 600);
   S.votePending.add(pid);   // la scheda resta ferma finché non si preme OK
+  S.unsavedPids.add(pid);
   render();
 }
 
@@ -270,11 +271,16 @@ async function saveVotes() {
   if (S.saving) { S.saveTimer = setTimeout(saveVotes, 400); return; }
   if (!S.dirty || !S.uid) return;
   S.saving = true; S.dirty = false;
+  const batch = new Set(S.unsavedPids); S.unsavedPids = new Set();
   try {
     await setDoc(doc(db, "votes", S.uid), { ratings: clone(S.my), updatedAt: Date.now() });
-    flash("Voti salvati.", "ok");
+    // conferma discreta sulle schede salvate, senza messaggi che spostano la pagina
+    batch.forEach(id => S.savedPids.add(id));
+    clearTimeout(S.savedTimer);
+    S.savedTimer = setTimeout(() => { S.savedPids = new Set(); if (S.view === "vota") render(); }, 1800);
   } catch (e) {
     S.dirty = true;
+    batch.forEach(id => S.unsavedPids.add(id));
     flash("Salvataggio non riuscito, riprovo tra poco.", "warn");
     S.saveTimer = setTimeout(saveVotes, 2500 + Math.random() * 1500);
   }
@@ -764,10 +770,24 @@ async function deleteUser(uid) {
 /* =========================================================
    Messaggi
    ========================================================= */
-let flashTimer = null, flashMsg = null;
+// Messaggi temporanei: avviso fluttuante in basso ("toast") che non sposta la pagina
+let flashTimer = null;
+const $toast = (() => {
+  const t = document.createElement("div");
+  t.id = "toast"; t.className = "toast"; t.setAttribute("role", "status"); t.setAttribute("aria-live", "polite"); t.hidden = true;
+  document.body.appendChild(t);
+  return t;
+})();
 function flash(msg, kind) {
-  flashMsg = { msg, kind }; renderStatus();
-  clearTimeout(flashTimer); flashTimer = setTimeout(() => { flashMsg = null; renderStatus(); }, 3500);
+  $toast.textContent = msg;
+  $toast.className = "toast" + (kind ? " " + kind : "");
+  $toast.hidden = false;
+  requestAnimationFrame(() => $toast.classList.add("show"));
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    $toast.classList.remove("show");
+    setTimeout(() => { if (!$toast.classList.contains("show")) $toast.hidden = true; }, 300);
+  }, kind === "warn" ? 5000 : 2600);
 }
 const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
@@ -780,8 +800,7 @@ const HINTS = {
 function renderStatus() {
   if (S.phase !== "ready") { $status.hidden = true; return; }
   let msg, kind = "";
-  if (flashMsg) { msg = flashMsg.msg; kind = flashMsg.kind; }
-  else if (S.failed) { msg = S.failed; kind = "warn"; }
+  if (S.failed) { msg = S.failed; kind = "warn"; }
   else msg = HINTS[S.view] || "";
   $status.hidden = !msg;
   $status.className = "status" + (kind ? " " + kind : "");
@@ -864,7 +883,7 @@ function voteHTML() {
     const mine = S.my[p.id] || {};
     const n = SKILLS.filter(({ k }) => mine[k]).length;
     h += `<article class="card vcard" data-pid="${p.id}">
-      <div class="card-h"><h3>${esc(p.name)}</h3>${S.votePending.has(p.id) ? `<button class="btn sm primary ok-btn" id="ok-${p.id}" data-act="vok" title="Riordina la lista">OK</button>` : ""}<span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
+      <div class="card-h"><h3>${esc(p.name)}</h3>${S.votePending.has(p.id) ? `<button class="btn sm primary ok-btn" id="ok-${p.id}" data-act="vok" title="Riordina la lista">OK</button>` : ""}${S.savedPids.has(p.id) ? `<span class="saved-tick" aria-live="polite">✓ salvato</span>` : ""}<span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
     const shown = S.voteSort === "all" ? SKILLS : SKILLS.filter(({ k }) => k === S.voteSort);   // con una skill scelta si vede solo quella
     for (const { k, l } of shown) {
       h += `<div class="skill${S.voteSort === k ? " sorted" : ""}"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
