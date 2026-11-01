@@ -37,7 +37,7 @@ const S = {
   state: null, matches: [], fvotes: new Map(),
   users: [], admins: new Set(), votes: new Map(),
   genN: 20,
-  voteSort: "all", voteOrder: null, voteStale: true, reorderTimer: null,
+  voteSort: "all", voteOrder: null, voteStale: true, votePending: new Set(),
   sel: [], draft: null, played: null, winner: null, finalA: null, finalB: null, finalFrom: null, addPid: "",
   confirm: null, busy: false, newName: "", bulk: "",
   failed: "", loginErr: "",
@@ -68,7 +68,7 @@ function readView() {
   return all.includes(p) ? p : "vota";
 }
 function go(view) {
-  if (S.reorderTimer) { clearTimeout(S.reorderTimer); S.reorderTimer = null; }
+  S.votePending = new Set();
   S.voteStale = true;
   S.view = view; S.confirm = null;
   try { history.pushState(null, "", "?p=" + view); } catch (_) { }
@@ -144,11 +144,11 @@ function subscribe() {
   const uid = S.uid;
   S.unsubs.push(onSnapshot(collection(db, "players"), snap => {
     S.players = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
-    if (!S.reorderTimer) S.voteStale = true;
+    if (!S.votePending.size) S.voteStale = true;
     render();
   }, onErr));
   S.unsubs.push(onSnapshot(doc(db, "votes", uid), snap => {
-    if (!S.dirty && !S.saving) { S.my = clone(snap.exists() ? snap.data().ratings : {}); if (!S.reorderTimer) S.voteStale = true; }
+    if (!S.dirty && !S.saving) { S.my = clone(snap.exists() ? snap.data().ratings : {}); if (!S.votePending.size) S.voteStale = true; }
     render();
   }, onErr));
   S.unsubs.push(onSnapshot(doc(db, "config", "state"), snap => {
@@ -215,8 +215,7 @@ function rate(pid, k, v) {
   S.dirty = true;
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(saveVotes, 600);
-  clearTimeout(S.reorderTimer);
-  S.reorderTimer = setTimeout(applyReorder, 2000);   // la scheda resta ferma 2 s, poi si ricolloca
+  S.votePending.add(pid);   // la scheda resta ferma finché non si preme OK
   render();
 }
 
@@ -242,7 +241,7 @@ function currentVoteOrder() {
 }
 // Ricollocazione animata (tecnica FLIP): misura, riordina, poi fa scivolare le schede
 function applyReorder() {
-  clearTimeout(S.reorderTimer); S.reorderTimer = null;
+  S.votePending = new Set();
   if (S.view !== "vota") { S.voteStale = true; return; }
   const before = new Map([...document.querySelectorAll(".vcard")].map(e => [e.dataset.pid, e.getBoundingClientRect()]));
   S.voteOrder = computeVoteOrder(); S.voteStale = false;
@@ -858,14 +857,14 @@ function voteHTML() {
     <span class="meta">Ordina per</span>
     ${sorts.map(([k, l]) => `<button class="sortchip" id="vs-${k}" data-act="vsort" data-k="${k}" aria-pressed="${S.voteSort === k}">${l}</button>`).join("")}
   </div>
-  <p class="note">L'ordine segue i tuoi voti, dal più alto al più basso; a parità conta il tuo giudizio complessivo. Chi non hai ancora votato è in fondo.</p>
+  <p class="note">L'ordine segue i tuoi voti, dal più alto al più basso; a parità conta il tuo giudizio complessivo. Chi non hai ancora votato è in fondo. Dopo aver cambiato le stelle premi <b>OK</b> sulla scheda per riordinare la lista.</p>
   <div class="grid">`;
   for (const id of currentVoteOrder()) {
     const p = byId.get(id); if (!p) continue;
     const mine = S.my[p.id] || {};
     const n = SKILLS.filter(({ k }) => mine[k]).length;
     h += `<article class="card vcard" data-pid="${p.id}">
-      <div class="card-h"><h3>${esc(p.name)}</h3><span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
+      <div class="card-h"><h3>${esc(p.name)}</h3>${S.votePending.has(p.id) ? `<button class="btn sm primary ok-btn" id="ok-${p.id}" data-act="vok" title="Riordina la lista">OK</button>` : ""}<span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
     const shown = S.voteSort === "all" ? SKILLS : SKILLS.filter(({ k }) => k === S.voteSort);   // con una skill scelta si vede solo quella
     for (const { k, l } of shown) {
       h += `<div class="skill${S.voteSort === k ? " sorted" : ""}"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
@@ -1148,6 +1147,7 @@ document.addEventListener("click", e => {
   if (a === "login") login();
   else if (a === "logout") signOut(auth);
   else if (a === "rate") rate(b.dataset.pid, b.dataset.k, Number(b.dataset.v));
+  else if (a === "vok") applyReorder();
   else if (a === "vsort") { if (S.voteSort !== b.dataset.k) { S.voteSort = b.dataset.k; applyReorder(); } }
   else if (a === "fvote") voteFormation(Number(b.dataset.i));
   else if (a === "shot") shoot(b.dataset.key);

@@ -293,3 +293,6 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 .bal{gap:4px;padding:3px 4px 3px 8px;border:1.5px solid var(--frame);border-radius:8px;background:var(--surface)}
 .bal-lbl{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.05em;font-size:12px;color:var(--muted);margin-right:2px}
 .bal .eq{font-size:13px;padding:1px 7px;border-radius:5px}
+.card-h .ok-btn{padding:3px 12px;font-weight:700}
+@media (prefers-reduced-motion:no-preference){.ok-btn{animation:okpop .25s ease-out}}
+@keyframes okpop{from{transform:scale(.7);opacity:0}}
