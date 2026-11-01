@@ -301,7 +301,8 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 .toast.ok{background:var(--good);color:#fff}
 .toast.warn{background:var(--warn);color:#fff}
 /* conferma di salvataggio sulla scheda */
-.saved-tick{font-size:12px;font-weight:700;color:var(--good);white-space:nowrap;animation:savedfade 1.8s ease forwards}
+.saved-tick{font-size:12px;font-weight:700;color:var(--good);white-space:nowrap;visibility:hidden}
+.saved-tick.on{visibility:visible;animation:savedfade 1.8s ease forwards}
 @keyframes savedfade{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}
 /* nome sempre su una riga: OK e "salvato" non cambiano l'altezza della scheda */
 .vcard .card-h{flex-wrap:nowrap;min-height:30px}

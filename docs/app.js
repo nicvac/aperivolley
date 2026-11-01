@@ -883,7 +883,7 @@ function voteHTML() {
     const mine = S.my[p.id] || {};
     const n = SKILLS.filter(({ k }) => mine[k]).length;
     h += `<article class="card vcard" data-pid="${p.id}">
-      <div class="card-h"><h3>${esc(p.name)}</h3>${S.votePending.has(p.id) ? `<button class="btn sm primary ok-btn" id="ok-${p.id}" data-act="vok" title="Riordina la lista">OK</button>` : ""}${S.savedPids.has(p.id) ? `<span class="saved-tick" aria-live="polite">✓ salvato</span>` : ""}<span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
+      <div class="card-h"><h3>${esc(p.name)}</h3>${S.savedPids.has(p.id) || S.votePending.has(p.id) ? `<span class="saved-tick${S.savedPids.has(p.id) ? " on" : ""}" aria-live="polite">✓ salvato</span>` : ""}${S.votePending.has(p.id) ? `<button class="btn sm primary ok-btn" id="ok-${p.id}" data-act="vok" title="Riordina la lista">OK</button>` : ""}<span class="pill ${n === SKILLS.length ? "ok" : n ? "part" : ""} num">${n}/${SKILLS.length}</span></div>`;
     const shown = S.voteSort === "all" ? SKILLS : SKILLS.filter(({ k }) => k === S.voteSort);   // con una skill scelta si vede solo quella
     for (const { k, l } of shown) {
       h += `<div class="skill${S.voteSort === k ? " sorted" : ""}"><span class="lbl">${l}</span><div class="stars" role="group" aria-label="${l}">`;
