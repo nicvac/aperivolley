@@ -949,15 +949,16 @@ function rankingHTML() {
   const lastPlayed = Math.max(0, ...S.matches.filter(m => m.status === "played").map(m => m.playedAt || 0));
   const partite = `${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}`;
   if (rows.some(r => r.pts > 0)) loadH2I().catch(() => { });
-  let h = `<p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine da condividere compaiono solo i giocatori con almeno un punto.</p>
+  let h = `<p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine da condividere compaiono i primi 18 giocatori con almeno un punto.</p>
   <section class="rank-card has-shot" id="rank-card">
     ${rows.some(r => r.pts > 0) ? shotBtn("rank") : ""}
     <div class="rank-head"><h2>Classifica</h2><span class="meta num">${partite}${lastPlayed ? ` · aggiornata al ${fmtDate(lastPlayed)}` : ""}</span></div>
     <div class="rank-grid" role="table" aria-label="Classifica">
       <div class="rrow rhead" role="row"><span role="columnheader">#</span><span role="columnheader">Giocatore</span><span class="r" role="columnheader">Punti</span><span class="r" role="columnheader">Giocate</span><span class="r" role="columnheader">Vinte</span><span class="r" role="columnheader">% vitt.</span></div>`;
-  for (const r of rows) {
-    h += `<div class="rrow${r.pos <= 3 && r.pts > 0 ? " podium" : ""}${r.g === 0 ? " zero" : ""}${r.pts === 0 ? " no-shot" : ""}" role="row"><span class="num" role="cell">${r.pos}</span><span class="nm" role="cell">${esc(r.name)}</span><span class="r num pts" role="cell">${r.pts}</span><span class="r num" role="cell">${r.g}</span><span class="r num" role="cell">${r.v}</span><span class="r num" role="cell">${r.g ? Math.round(r.pct * 100) + "%" : "–"}</span></div>`;
-  }
+  const SHOT_MAX = 18;   // nell'immagine: solo i primi 18 con almeno un punto
+  rows.forEach((r, idx) => {
+    h += `<div class="rrow${r.pos <= 3 && r.pts > 0 ? " podium" : ""}${r.g === 0 ? " zero" : ""}${r.pts === 0 || idx >= SHOT_MAX ? " no-shot" : ""}" role="row"><span class="num" role="cell">${r.pos}</span><span class="nm" role="cell">${esc(r.name)}</span><span class="r num pts" role="cell">${r.pts}</span><span class="r num" role="cell">${r.g}</span><span class="r num" role="cell">${r.v}</span><span class="r num" role="cell">${r.g ? Math.round(r.pct * 100) + "%" : "–"}</span></div>`;
+  });
   return h + `</div></section>`;
 }
 
