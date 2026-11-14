@@ -323,7 +323,6 @@ function playerAverages() {
 */
 const ROLE_GATE = 0.25;
 const TOP_PER_ROLE = 2;
-const r1 = x => Math.round(x * 10) / 10;
 // Equilibrio in percentuale, lineare: squilibrio x in stelle (0..4) → 100·(4 − x)/4
 const balPct = x => Math.max(0, Math.min(100, Math.round(100 * (4 - x) / 4)));
 const BAL_SCALE = 2;   // versione della scala salvata nelle formazioni (2 = percentuale lineare)
@@ -356,13 +355,15 @@ function evaluate(Aids, Bids, avg) {
   return { mA, mB, gA, gB, dG, cost, role };
 }
 
-// Formazione nel formato pubblicato (solo medie di squadra arrotondate)
+// Statistiche di squadra con i valori esatti (nessun arrotondamento qui):
+// toRelative() le trasforma in percentuali e arrotonda solo il risultato finale.
+// Nel database finiscono sempre e solo le percentuali.
 function toFormation(Aids, Bids, avg) {
   const e = evaluate(Aids, Bids, avg);
-  const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, r1(m[j])]));
+  const statsOf = m => Object.fromEntries(SKILLS.map(({ k }, j) => [k, m[j]]));
   return {
     A: sortIdsByName(Aids), B: sortIdsByName(Bids),
-    sA: statsOf(e.mA), sB: statsOf(e.mB), gA: r1(e.gA), gB: r1(e.gB),
+    sA: statsOf(e.mA), sB: statsOf(e.mB), gA: e.gA, gB: e.gB,
     req: balPct(e.role), eq: balPct(e.cost), bal: BAL_SCALE,
     _role: e.role, _cost: e.cost
   };
