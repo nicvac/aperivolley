@@ -429,8 +429,8 @@ const MAX_FORMATIONS = 10;   // deve coincidere con firestore.rules (choice < 10
 // appendTo: id della partita in votazione a cui aggiungere formazioni (null = nuova partita)
 async function makeDraft(appendTo = null) {
   const m = appendTo ? S.matches.find(x => x.id === appendTo) : null;
-  const sel = (m ? m.selected : S.sel).filter(id => S.players.some(p => p.id === id));
-  if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) { if (m) flash("I convocati di questa partita non permettono di generare formazioni.", "warn"); return; }
+  const sel = (m ? m.selected : S.sel).filter(id => S.players.some(p => p.id === id));   // in aggiunta: convocati della partita, non modificabili
+  if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) { return; }
   S.busy = true; render();
   try {
     const snap = await getDocs(collection(db, "votes"));   // dati freschi
@@ -439,8 +439,9 @@ async function makeDraft(appendTo = null) {
     // le formazioni già in votazione non vengono riproposte
     const published = new Set(m ? m.formations.map(f => splitKey(f.A, f.B)) : []);
     S.draft = { sel, avg, items: [], cons: [], filterOn: false, nextId: 0, allSkills: true, highlight: new Set(), divN: 5, consA: "", consRel: "same", consB: "", appendTo, published };
-    S.draft.items = generate(sel, avg, { exclude: published }).map(newItem);
-    flash(`${S.draft.items.length} proposte pronte: sistemale, spunta quelle da pubblicare e pubblicale.`, "ok");
+    // per una nuova partita si generano subito le proposte; in aggiunta la bozza parte vuota
+    S.draft.items = m ? [] : generate(sel, avg, { exclude: published }).map(newItem);
+    flash(m ? "Imposta eventuali vincoli e premi «Genera»." : `${S.draft.items.length} proposte pronte: sistemale, spunta quelle da pubblicare e pubblicale.`, "ok");
   } catch (e) { flash("Calcolo non riuscito: " + (e.code || "errore"), "warn"); }
   S.busy = false; render();
 }
@@ -1007,6 +1008,21 @@ function rankingHTML() {
 }
 
 /* ---------- Admin: Partita ---------- */
+// Scelta dei convocati e del numero di proposte per una nuova partita
+function selectionHTML() {
+  const sel = S.sel.filter(id => S.players.some(p => p.id === id)), n = sel.length;
+  const ok = n >= MIN_SEL && n <= MAX_SEL && n % 2 === 0;
+  const set = new Set(sel);
+  const voters = S.votes.size;
+  return `<div class="sec-head"><h2>Nuova partita</h2><span class="count num ${n === 12 ? "okc" : ok ? "" : "badc"}">${n} / 12</span></div>
+  <div class="bar"><button class="btn" id="sel-none" data-act="sel-none">Svuota</button><button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button></div>
+  <div class="chips">${S.players.map(p => `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${set.has(p.id)}"><span class="dot"></span>${esc(p.name)}</button>`).join("")}</div>
+  <div class="manage-row" style="margin-top:16px">
+    <span class="gen-ctl"><button class="btn primary" id="gen" data-act="gendraft" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : "Genera"}</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte</span></span>
+    <span class="meta">${ok ? `Le proposte si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"} (dove manca un voto si usa ${FALLBACK}). Prima di pubblicarle potrai modificarle.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
+  </div>`;
+}
+
 function draftTeam(id, side, ids, stats, g, showSkills) {
   return `<section class="team ${side}">
     <div class="team-h"><h4>Squadra ${side} <small class="meta num">(${ids.length})</small></h4><div class="tg num">${dec(g)}<small> totale</small></div></div>
@@ -1019,7 +1035,7 @@ function draftHTML() {
   const nPub = d.items.filter(it => it.pub).length;
   const opts = (sel) => `<option value="">Giocatore…</option>` + sortIdsByName(d.sel).map(pid => `<option value="${pid}" ${sel === pid ? "selected" : ""}>${esc(pName(pid))}</option>`).join("");
   const appendM = d.appendTo ? S.matches.find(x => x.id === d.appendTo) : null;
-  let h = `${appendM ? `<div class="append-banner">Stai aggiungendo formazioni alla <b>partita in votazione</b> (${appendM.formations.length} già pubblicate, escluse da queste proposte). Le nuove andranno in coda.</div>` : ""}<div class="sec-head"><h2>${appendM ? "Nuove formazioni da aggiungere" : "Proposte da sistemare"}</h2><span class="meta num">${d.sel.length} convocati · ${d.items.length} propost${d.items.length === 1 ? "a" : "e"}${d.filterOn ? ` · ${vis.length} visibili col filtro` : ""} · ${nPub} da pubblicare · bozza visibile solo a te</span></div>
+  let h = `${appendM ? `<div class="append-banner">Stai aggiungendo formazioni alla <b>partita in votazione</b> (${appendM.formations.length} già pubblicate, escluse dalle proposte; puoi aggiungerne ancora ${MAX_FORMATIONS - appendM.formations.length}). I convocati sono quelli della partita. Le nuove andranno in coda.</div>` : ""}<div class="sec-head"><h2>${appendM ? "Nuove formazioni da aggiungere" : "Proposte da sistemare"}</h2><span class="meta num">${d.sel.length} convocati · ${d.items.length} propost${d.items.length === 1 ? "a" : "e"}${d.filterOn ? ` · ${vis.length} visibili col filtro` : ""} · ${nPub} da pubblicare · bozza visibile solo a te</span></div>
 
   <div class="card tools">
     <strong>Vincoli</strong>
@@ -1031,7 +1047,7 @@ function draftHTML() {
     </div>
     ${d.cons.length ? `<div class="chips">${d.cons.map((c, i) => `<span class="cons-chip">${esc(pName(c.a))} <b>${c.same ? "con" : "non con"}</b> ${esc(pName(c.b))}<button class="linkbtn" id="cons-rm-${i}" data-act="consrm" data-i="${i}" aria-label="Rimuovi vincolo">✕</button></span>`).join("")}</div>` : `<span class="meta">Nessun vincolo: tutte le condizioni vanno rispettate insieme (E).</span>`}
     <div class="manage-row">
-      <span class="gen-ctl"><button class="btn primary" id="gen-more" data-act="genmore">Genera altre</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte${d.cons.length ? " con questi vincoli" : ""}</span></span>
+      <span class="gen-ctl"><button class="btn primary" id="gen-more" data-act="genmore">${d.items.length ? "Genera altre" : "Genera"}</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte${d.cons.length ? " con questi vincoli" : ""}</span></span>
       <label class="check"><input type="checkbox" id="filter-on" ${d.filterOn ? "checked" : ""} ${d.cons.length ? "" : "disabled"}> Mostra solo le proposte che rispettano i vincoli</label>
     </div>
     <strong>Elenco</strong>
@@ -1044,7 +1060,8 @@ function draftHTML() {
   </div>
   <p class="note">Sposta i giocatori con → A / → B, riordina le proposte con ↑ ↓ e spunta <b>Pubblica</b> su quelle da mettere ai voti: si pubblicano nell'ordine dell'elenco. Totali e skill sono su 10; l'equilibrio (ruoli e forza) è in percentuale: verde dal 95%, giallo dal 90%, rosso sotto. Le squadre da pubblicare devono avere lo stesso numero di giocatori. Se ricarichi la pagina la bozza si perde.</p>
   <div class="variants">`;
-  if (!vis.length) h += `<div class="empty">Nessuna proposta rispetta i vincoli. Prova «Genera altre proposte» con questi vincoli.</div>`;
+  if (!d.items.length) h += `<div class="empty">Nessuna proposta ancora. Imposta eventuali vincoli e premi «Genera» qui sopra.</div>`;
+  else if (!vis.length) h += `<div class="empty">Nessuna proposta rispetta i vincoli. Prova «Genera altre proposte» con questi vincoli.</div>`;
   vis.forEach((it, vi) => {
     const f = toFormation(it.A, it.B, d.avg);
     const changed = !sameSet(it.A, it.oA) || !sameSet(it.B, it.oB);
@@ -1138,17 +1155,7 @@ function matchAdminHTML() {
   } else if (S.draft) {
     h += draftHTML();
   } else {
-    const sel = S.sel.filter(id => S.players.some(p => p.id === id)), n = sel.length;
-    const ok = n >= MIN_SEL && n <= MAX_SEL && n % 2 === 0;
-    const set = new Set(sel);
-    const voters = S.votes.size;
-    h += `<div class="sec-head"><h2>Nuova partita</h2><span class="count num ${n === 12 ? "okc" : ok ? "" : "badc"}">${n} / 12</span></div>
-    <div class="bar"><button class="btn" id="sel-none" data-act="sel-none">Svuota</button><button class="btn" id="sel-all" data-act="sel-all">Seleziona tutti</button></div>
-    <div class="chips">${S.players.map(p => `<button class="chip" id="ch-${p.id}" data-act="toggle" data-pid="${p.id}" aria-pressed="${set.has(p.id)}"><span class="dot"></span>${esc(p.name)}</button>`).join("")}</div>
-    <div class="manage-row" style="margin-top:16px">
-      <span class="gen-ctl"><button class="btn primary" id="gen" data-act="gendraft" ${ok && !S.busy ? "" : "disabled"}>${S.busy ? "Calcolo in corso…" : "Genera"}</button><input class="field num" type="number" id="gen-n" min="1" max="500" value="${esc(S.genN)}" aria-label="Quante proposte"><span class="meta">proposte</span></span>
-      <span class="meta">${ok ? `Le proposte si calcolano dai voti di ${voters} person${voters === 1 ? "a" : "e"} (dove manca un voto si usa ${FALLBACK}). Prima di pubblicarle potrai modificarle.` : n % 2 ? "Serve un numero pari di convocati." : `Seleziona da ${MIN_SEL} a ${MAX_SEL} convocati.`}</span>
-    </div>`;
+    h += selectionHTML();
   }
   const hist = S.matches.filter(x => x.status === "played").sort((a, b) => (b.playedAt || 0) - (a.playedAt || 0));
   h += `<div class="sec-head" style="margin-top:28px"><h2>Partite giocate</h2><span class="meta num">${hist.length}</span></div>`;
