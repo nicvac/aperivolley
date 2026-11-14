@@ -69,7 +69,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['choice', 'at'])
           && request.resource.data.choice is int
           && request.resource.data.choice >= 0
-          && request.resource.data.choice < 50
+          && request.resource.data.choice < 10
           && get(/databases/$(database)/documents/matches/$(matchId)).data.status == 'voting';
         allow delete: if isSelf(uid) || isAdmin();
       }

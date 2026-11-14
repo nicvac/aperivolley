@@ -425,7 +425,7 @@ function rankCmp(x, y) {
 function newItem(f) {
   return { id: ++S.draft.nextId, A: f.A.slice(), B: f.B.slice(), oA: f.A.slice(), oB: f.B.slice(), pub: false, skills: S.draft.allSkills };
 }
-const MAX_FORMATIONS = 50;   // deve coincidere con firestore.rules (choice < 50)
+const MAX_FORMATIONS = 10;   // deve coincidere con firestore.rules (choice < 10)
 // appendTo: id della partita in votazione a cui aggiungere formazioni (null = nuova partita)
 async function makeDraft(appendTo = null) {
   const m = appendTo ? S.matches.find(x => x.id === appendTo) : null;
@@ -508,7 +508,13 @@ function draftDiverse() {
   render();
 }
 const draftPublishable = () => S.draft && S.draft.items.filter(it => it.pub);
-const draftValid = () => { const p = draftPublishable(); return p && p.length >= 1 && p.every(it => it.A.length === it.B.length && it.A.length > 0); };
+// posti ancora disponibili: per una partita nuova 10, in aggiunta 10 meno quelle già pubblicate
+function draftSlots() {
+  const d = S.draft; if (!d) return MAX_FORMATIONS;
+  const m = d.appendTo ? S.matches.find(x => x.id === d.appendTo) : null;
+  return MAX_FORMATIONS - (m ? m.formations.length : 0);
+}
+const draftValid = () => { const p = draftPublishable(); return p && p.length >= 1 && p.length <= draftSlots() && p.every(it => it.A.length === it.B.length && it.A.length > 0); };
 
 async function publishMatch() {
   if (!draftValid()) return;
@@ -1071,7 +1077,7 @@ function draftHTML() {
     ${S.confirm === "draft-discard"
       ? `<button class="btn danger" id="dx-yes" data-act="ddiscard">Conferma</button><button class="btn" id="dx-no" data-act="cancel">Annulla</button>`
       : `<button class="btn" id="dx-ask" data-act="ask" data-key="draft-discard">${d.appendTo ? "Torna alla partita" : "Torna ai convocati"}</button>`}
-    <span class="meta">${!nPub ? "Spunta «Pubblica» su almeno una proposta." : valid ? "" : "Riporta in pari le squadre delle proposte spuntate."}</span>
+    <span class="meta">${!nPub ? `Spunta «Pubblica» su almeno una proposta (al massimo ${draftSlots()}).` : nPub > draftSlots() ? `Troppe proposte spuntate: al massimo ${MAX_FORMATIONS} formazioni per partita${d.appendTo ? `, ne puoi aggiungere ancora ${draftSlots()}` : ""}.` : valid ? "" : "Riporta in pari le squadre delle proposte spuntate."}</span>
   </div>`;
   return h;
 }
@@ -1087,7 +1093,7 @@ function matchAdminHTML() {
     if (S.played == null) S.played = counts.some(c => c > 0) ? best : 0;
     h += `<div class="sec-head"><h2>Partita in votazione</h2><span class="meta num">Pubblicata il ${fmtDateTime(m.createdAt)} · ${S.fvotes.size} vot${S.fvotes.size === 1 ? "o" : "i"}</span></div>
     <div class="card">
-    <div class="manage-row"><button class="btn" id="add-forms" data-act="addforms" ${S.busy || m.formations.length >= MAX_FORMATIONS ? "disabled" : ""}>+ Aggiungi formazioni alla votazione</button><span class="meta">Con gli stessi convocati; i voti già dati restano validi.</span></div>
+    <div class="manage-row"><button class="btn" id="add-forms" data-act="addforms" ${S.busy || m.formations.length >= MAX_FORMATIONS ? "disabled" : ""}>+ Aggiungi formazioni alla votazione</button><span class="meta">${m.formations.length >= MAX_FORMATIONS ? `Già ${MAX_FORMATIONS} formazioni: è il massimo per partita.` : `Con gli stessi convocati; i voti già dati restano validi. Puoi aggiungerne ancora ${MAX_FORMATIONS - m.formations.length}.`}</span></div>
     <strong>1. Formazione di partenza</strong><span class="meta">Di solito la più votata. Le formazioni senza voti si possono eliminare.</span><div class="radio-list">`;
     m.formations.forEach((f, i) => {
       h += `<div class="radio-row"><label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
