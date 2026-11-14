@@ -425,23 +425,28 @@ function rankCmp(x, y) {
 function newItem(f) {
   return { id: ++S.draft.nextId, A: f.A.slice(), B: f.B.slice(), oA: f.A.slice(), oB: f.B.slice(), pub: false, skills: S.draft.allSkills };
 }
-async function makeDraft() {
-  const sel = S.sel.filter(id => S.players.some(p => p.id === id));
-  if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) return;
+const MAX_FORMATIONS = 50;   // deve coincidere con firestore.rules (choice < 50)
+// appendTo: id della partita in votazione a cui aggiungere formazioni (null = nuova partita)
+async function makeDraft(appendTo = null) {
+  const m = appendTo ? S.matches.find(x => x.id === appendTo) : null;
+  const sel = (m ? m.selected : S.sel).filter(id => S.players.some(p => p.id === id));
+  if (sel.length < MIN_SEL || sel.length > MAX_SEL || sel.length % 2) { if (m) flash("I convocati di questa partita non permettono di generare formazioni.", "warn"); return; }
   S.busy = true; render();
   try {
     const snap = await getDocs(collection(db, "votes"));   // dati freschi
     S.votes = new Map(snap.docs.map(d => [d.id, d.data()]));
     const avg = playerAverages();
-    S.draft = { sel, avg, items: [], cons: [], filterOn: false, nextId: 0, allSkills: true, highlight: new Set(), divN: 5, consA: "", consRel: "same", consB: "" };
-    S.draft.items = generate(sel, avg).map(newItem);
+    // le formazioni già in votazione non vengono riproposte
+    const published = new Set(m ? m.formations.map(f => splitKey(f.A, f.B)) : []);
+    S.draft = { sel, avg, items: [], cons: [], filterOn: false, nextId: 0, allSkills: true, highlight: new Set(), divN: 5, consA: "", consRel: "same", consB: "", appendTo, published };
+    S.draft.items = generate(sel, avg, { exclude: published }).map(newItem);
     flash(`${S.draft.items.length} proposte pronte: sistemale, spunta quelle da pubblicare e pubblicale.`, "ok");
   } catch (e) { flash("Calcolo non riuscito: " + (e.code || "errore"), "warn"); }
   S.busy = false; render();
 }
 function addBatch() {
   const d = S.draft; if (!d) return;
-  const exclude = new Set(d.items.map(it => splitKey(it.A, it.B)));
+  const exclude = new Set([...d.items.map(it => splitKey(it.A, it.B)), ...(d.published || [])]);
   const fresh = generate(d.sel, d.avg, { cons: d.cons, exclude }).map(newItem);
   d.items.push(...fresh);
   flash(fresh.length ? `Aggiunte ${fresh.length} proposte${d.cons.length ? " che rispettano i vincoli" : ""}.` : "Nessuna nuova proposta trovata con questi vincoli.", fresh.length ? "ok" : "warn");
@@ -509,18 +514,50 @@ async function publishMatch() {
   if (!draftValid()) return;
   S.busy = true; render();
   try {
-    const { sel, avg } = S.draft;
+    const { sel, avg, appendTo } = S.draft;
     const formations = draftPublishable().map(it => toFormation(it.A, it.B, avg))      // nell'ordine scelto a mano
       .map(({ _role, _cost, ...f }) => ({ ...f, ...toRelative(f) }));                 // nel database solo percentuali
-    const ref = doc(collection(db, "matches"));
-    const b = writeBatch(db);
-    b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
-    b.set(doc(db, "config", "state"), { currentMatch: ref.id, updatedAt: Date.now() });
-    await b.commit();
-    S.sel = []; S.draft = null; S.played = null; S.winner = null;
-    flash("Formazioni pubblicate: ora i giocatori possono votarle.", "ok");
+    if (appendTo) {
+      // aggiunta alla partita in votazione: le nuove formazioni vanno in coda, i voti già dati non cambiano
+      const m = S.matches.find(x => x.id === appendTo);
+      if (!m || m.status !== "voting") throw { code: "la votazione non è più aperta" };
+      const all = [...m.formations, ...formations];
+      if (all.length > MAX_FORMATIONS) throw { code: `massimo ${MAX_FORMATIONS} formazioni per partita` };
+      await updateDoc(doc(db, "matches", appendTo), { formations: all });
+      S.draft = null;
+      flash(`Aggiunte ${formations.length} formazioni alla votazione in corso.`, "ok");
+    } else {
+      if (formations.length > MAX_FORMATIONS) throw { code: `massimo ${MAX_FORMATIONS} formazioni per partita` };
+      const ref = doc(collection(db, "matches"));
+      const b = writeBatch(db);
+      b.set(ref, { status: "voting", createdAt: Date.now(), selected: sel, formations, createdBy: S.user.email || "" });
+      b.set(doc(db, "config", "state"), { currentMatch: ref.id, updatedAt: Date.now() });
+      await b.commit();
+      S.sel = []; S.draft = null; S.played = null; S.winner = null;
+      flash("Formazioni pubblicate: ora i giocatori possono votarle.", "ok");
+    }
   } catch (e) { flash("Pubblicazione non riuscita: " + (e.code || "errore"), "warn"); }
   S.busy = false; render();
+}
+
+// Elimina una formazione senza voti dalla partita in votazione.
+// I voti sono salvati come posizione: quelli delle formazioni successive scalano di uno.
+async function deleteFormation(i) {
+  const m = currentMatch(); if (!m) return;
+  if (m.formations.length <= 1) { flash("Deve restare almeno una formazione: per chiudere usa «Annulla partita».", "warn"); return; }
+  S.busy = true; render();
+  try {
+    const fv = await getDocs(collection(db, "matches", m.id, "fvotes"));   // controllo con dati freschi
+    if (fv.docs.some(d => d.data().choice === i)) throw { code: "nel frattempo ha ricevuto un voto" };
+    const b = writeBatch(db);
+    b.update(doc(db, "matches", m.id), { formations: m.formations.filter((_, j) => j !== i) });
+    fv.docs.forEach(d => { const c = d.data().choice; if (c > i) b.update(d.ref, { choice: c - 1 }); });
+    await b.commit();
+    if (S.played != null) S.played = S.played === i ? null : S.played > i ? S.played - 1 : S.played;
+    S.finalFrom = null;
+    flash(`Formazione ${i + 1} eliminata.`, "ok");
+  } catch (e) { flash("Eliminazione non riuscita: " + (e.code || "errore"), "warn"); }
+  S.confirm = null; S.busy = false; render();
 }
 
 async function voteFormation(i) {
@@ -975,7 +1012,8 @@ function draftHTML() {
   const d = S.draft, vis = visibleItems();
   const nPub = d.items.filter(it => it.pub).length;
   const opts = (sel) => `<option value="">Giocatore…</option>` + sortIdsByName(d.sel).map(pid => `<option value="${pid}" ${sel === pid ? "selected" : ""}>${esc(pName(pid))}</option>`).join("");
-  let h = `<div class="sec-head"><h2>Proposte da sistemare</h2><span class="meta num">${d.sel.length} convocati · ${d.items.length} propost${d.items.length === 1 ? "a" : "e"}${d.filterOn ? ` · ${vis.length} visibili col filtro` : ""} · ${nPub} da pubblicare · bozza visibile solo a te</span></div>
+  const appendM = d.appendTo ? S.matches.find(x => x.id === d.appendTo) : null;
+  let h = `${appendM ? `<div class="append-banner">Stai aggiungendo formazioni alla <b>partita in votazione</b> (${appendM.formations.length} già pubblicate, escluse da queste proposte). Le nuove andranno in coda.</div>` : ""}<div class="sec-head"><h2>${appendM ? "Nuove formazioni da aggiungere" : "Proposte da sistemare"}</h2><span class="meta num">${d.sel.length} convocati · ${d.items.length} propost${d.items.length === 1 ? "a" : "e"}${d.filterOn ? ` · ${vis.length} visibili col filtro` : ""} · ${nPub} da pubblicare · bozza visibile solo a te</span></div>
 
   <div class="card tools">
     <strong>Vincoli</strong>
@@ -1029,10 +1067,10 @@ function draftHTML() {
   const valid = draftValid();
   h += `</div>
   <div class="manage-row" style="margin-top:16px">
-    <button class="btn primary" id="publish" data-act="publish" ${valid && !S.busy ? "" : "disabled"}>${S.busy ? "Pubblicazione…" : `Pubblica ${nPub || ""} e apri la votazione`}</button>
+    <button class="btn primary" id="publish" data-act="publish" ${valid && !S.busy ? "" : "disabled"}>${S.busy ? "Pubblicazione…" : (d.appendTo ? `Aggiungi ${nPub || ""} alla votazione` : `Pubblica ${nPub || ""} e apri la votazione`)}</button>
     ${S.confirm === "draft-discard"
       ? `<button class="btn danger" id="dx-yes" data-act="ddiscard">Conferma</button><button class="btn" id="dx-no" data-act="cancel">Annulla</button>`
-      : `<button class="btn" id="dx-ask" data-act="ask" data-key="draft-discard">Torna ai convocati</button>`}
+      : `<button class="btn" id="dx-ask" data-act="ask" data-key="draft-discard">${d.appendTo ? "Torna alla partita" : "Torna ai convocati"}</button>`}
     <span class="meta">${!nPub ? "Spunta «Pubblica» su almeno una proposta." : valid ? "" : "Riporta in pari le squadre delle proposte spuntate."}</span>
   </div>`;
   return h;
@@ -1041,15 +1079,20 @@ function draftHTML() {
 function matchAdminHTML() {
   const m = currentMatch();
   let h = "";
-  if (m) {
+  if (m && S.draft && S.draft.appendTo === m.id) {
+    h += draftHTML();
+  } else if (m) {
     const counts = m.formations.map((_, i) => [...S.fvotes.values()].filter(c => c === i).length);
     const best = counts.indexOf(Math.max(...counts));
     if (S.played == null) S.played = counts.some(c => c > 0) ? best : 0;
     h += `<div class="sec-head"><h2>Partita in votazione</h2><span class="meta num">Pubblicata il ${fmtDateTime(m.createdAt)} · ${S.fvotes.size} vot${S.fvotes.size === 1 ? "o" : "i"}</span></div>
-    <div class="card"><strong>1. Formazione di partenza</strong><span class="meta">Di solito la più votata.</span><div class="radio-list">`;
+    <div class="card">
+    <div class="manage-row"><button class="btn" id="add-forms" data-act="addforms" ${S.busy || m.formations.length >= MAX_FORMATIONS ? "disabled" : ""}>+ Aggiungi formazioni alla votazione</button><span class="meta">Con gli stessi convocati; i voti già dati restano validi.</span></div>
+    <strong>1. Formazione di partenza</strong><span class="meta">Di solito la più votata. Le formazioni senza voti si possono eliminare.</span><div class="radio-list">`;
     m.formations.forEach((f, i) => {
-      h += `<label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
-        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · equilibrio: ruoli ${f.req != null ? f.req + "%" : "–"} · forza ${f.eq}%<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>`;
+      h += `<div class="radio-row"><label class="radio"><input type="radio" name="played" id="pl-${i}" data-act="played" data-i="${i}" ${S.played === i ? "checked" : ""}>
+        <span><b>Formazione ${i + 1}</b> · ${counts[i]} vot${counts[i] === 1 ? "o" : "i"} · equilibrio: ruoli ${f.req != null ? f.req + "%" : "–"} · forza ${f.eq}%<br><small>A: ${sortIdsByName(f.A).map(pName).map(esc).join(", ")}<br>B: ${sortIdsByName(f.B).map(pName).map(esc).join(", ")}</small></span></label>
+        ${counts[i] === 0 && m.formations.length > 1 ? `<span class="radio-del">${confirmBtns("delf-" + i, "Elimina", "delform", `data-i="${i}"`)}</span>` : ""}</div>`;
     });
     ensureFinal(m);
     const f = m.formations[S.played];
@@ -1183,6 +1226,8 @@ document.addEventListener("click", e => {
   else if (a === "sel-all") { S.sel = S.players.map(p => p.id); render(); }
   else if (a === "publish") publishMatch();
   else if (a === "gendraft") makeDraft();
+  else if (a === "addforms") { const m = currentMatch(); if (m) makeDraft(m.id); }
+  else if (a === "delform") deleteFormation(Number(b.dataset.i));
   else if (a === "dmove") draftMove(Number(b.dataset.id), b.dataset.pid);
   else if (a === "dreset") draftReset(Number(b.dataset.id));
   else if (a === "ddrop") draftDrop(Number(b.dataset.id));

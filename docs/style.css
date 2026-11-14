@@ -308,3 +308,9 @@ a.btn{display:inline-block;text-decoration:none;color:var(--ink)}
 .vcard .card-h{flex-wrap:nowrap;min-height:30px}
 .vcard .card-h h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 auto}
 .vcard .card-h > :not(h3){flex:none}
+
+/* Partita in votazione: elimina formazione, aggiunta */
+.radio-row{display:flex;gap:8px;align-items:flex-start}
+.radio-row .radio{flex:1;min-width:0}
+.radio-del{display:flex;gap:6px;flex-wrap:wrap;padding-top:6px}
+.append-banner{margin-top:18px;padding:10px 14px;border-radius:var(--r);background:var(--blue-soft);color:var(--ink);border:1.5px solid var(--blue);font-size:14px}
