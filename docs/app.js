@@ -323,6 +323,8 @@ function playerAverages() {
 */
 const ROLE_GATE = 0.25;
 const TOP_PER_ROLE = 2;
+// Peso di ogni skill nello squilibrio ruoli (media pesata): la battuta conta la metà
+const ROLE_WEIGHTS = { bat: 0.5, ric: 1, alz: 1, att: 1, mur: 1, rec: 1 };
 // Equilibrio in percentuale, lineare: squilibrio x in stelle (0..4) → 100·(4 − x)/4
 const balPct = x => Math.max(0, Math.min(100, Math.round(100 * (4 - x) / 4)));
 const BAL_SCALE = 2;   // versione della scala salvata nelle formazioni (2 = percentuale lineare)
@@ -344,14 +346,15 @@ function evaluate(Aids, Bids, avg) {
   const dG = Math.abs(gA - gB);
   const cost = 0.4 * dG + 0.4 * (dS.reduce((x, y) => x + y, 0) / K) + 0.2 * Math.max(...dS);
   const top = Math.max(1, Math.min(TOP_PER_ROLE, va.length, vb.length));
-  let role = 0;
+  let role = 0, wsum = 0;
   for (let j = 0; j < K; j++) {
+    const w = ROLE_WEIGHTS[SKILLS[j].k] ?? 1;
     const sa = va.map(v => v[j]).sort((x, y) => y - x), sb = vb.map(v => v[j]).sort((x, y) => y - x);
     let g = 0;
     for (let t = 0; t < top; t++) g += Math.abs((sa[t] ?? 0) - (sb[t] ?? 0));
-    role += g / top;
+    role += w * (g / top); wsum += w;
   }
-  role /= K;
+  role /= wsum || 1;
   return { mA, mB, gA, gB, dG, cost, role };
 }
 
@@ -374,7 +377,7 @@ function toFormation(Aids, Bids, avg) {
   1. Vincolo: si scartano le divisioni con differenza di media generale > ROLE_GATE
      (la soglia si allarga di 0,05 se restano meno divisioni di quelle richieste).
   2. Criterio principale, ruoli: per ogni skill si confrontano i due migliori di A
-     con i due migliori di B (1° con 1°, 2° con 2°).
+     con i due migliori di B (1° con 1°, 2° con 2°); media pesata con ROLE_WEIGHTS.
   3. Spareggio: 0,4 × Δ media globale + 0,4 × Δ medio skill + 0,2 × Δ skill più sbilanciata.
   Opzioni: cons = vincoli [{a, b, same}] da rispettare; exclude = chiavi già presenti; count = quante.
 */
