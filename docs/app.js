@@ -841,7 +841,7 @@ function flash(msg, kind) {
 const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
   formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
-  classifica: "Punti = presenze + vittorie. Ogni partita giocata vale 2 presenze, fino al massimo di partite giocate.",
+  classifica: "Punti = presenze + vittorie. Chi gioca almeno la metà delle partite ha gli stessi punti presenza di chi gioca sempre.",
   partita: "Scegli i convocati, genera le proposte, sistemale e pubblicale. Dopo la partita inserisci le formazioni definitive e la squadra vincitrice.",
   roster: "Aggiungi, rinomina o rimuovi giocatori.",
   utenti: "Persone che sono entrate nell'app con Google."
@@ -998,7 +998,7 @@ function rankingHTML() {
   const lastPlayed = Math.max(0, ...S.matches.filter(m => m.status === "played").map(m => m.playedAt || 0));
   const partite = `${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}`;
   if (rows.some(r => r.pts > 0)) loadH2I().catch(() => { });
-  let h = `<p class="note">Punti = presenze + vittorie. Ogni partita giocata vale 2 presenze, ma non si supera il numero massimo di partite giocate. Esempio: se il massimo è 10, chi ha giocato 4 partite ha 8 presenze, chi ne ha giocate 5 o più ne ha 10. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine compaiono i primi 18.</p>
+  let h = `<p class="note">Esempio:<br>- Ho giocato tutte le 10 partite =&gt; ho 10 punti presenza<br>- Ho giocato 5 o più partite su 10 =&gt; ho 10 punti presenza<br>- Ho giocato 3 partite su 10 =&gt; ho 6 punti presenza<br>A parità di punti conta la percentuale di vittorie, poi il numero di partite.</p>
   <section class="rank-card has-shot" id="rank-card">
     ${rows.some(r => r.pts > 0) ? shotBtn("rank") : ""}
     <div class="rank-head"><h2>Classifica</h2><span class="meta num">${partite}${lastPlayed ? ` · aggiornata al ${fmtDate(lastPlayed)}` : ""}</span></div>
