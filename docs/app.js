@@ -15,7 +15,7 @@ import { firebaseConfig, SUPER_ADMIN, SKILLS, toRelative } from "./shared.js";
    ========================================================= */
 const FALLBACK = 3;          // valore usato dove nessuno ha ancora votato
 const MIN_SEL = 4, MAX_SEL = 20;
-const PTS_WIN = 1, PTS_PLAYED = 1;   // classifica: 1 per vittoria + 1 per presenza (vittoria = 2, sconfitta = 1)
+// classifica: punti = presenze + vittorie, presenze = min(2 × giocate, max giocate)
 
 const USER_VIEWS = [["vota", "Vota"], ["formazioni", "Formazioni"], ["classifica", "Classifica"]];
 const ADMIN_VIEWS = [["partita", "Partita"], ["roster", "Roster"], ["utenti", "Utenti"]];
@@ -748,7 +748,8 @@ function ranking() {
       }
     }
   }
-  const rows = [...st.values()].map(s => ({ ...s, pts: PTS_WIN * s.v + PTS_PLAYED * s.g, pct: s.g ? s.v / s.g : 0 }));
+  const maxG = Math.max(0, ...[...st.values()].map(s => s.g));
+  const rows = [...st.values()].map(s => ({ ...s, pts: Math.min(2 * s.g, maxG) + s.v, pct: s.g ? s.v / s.g : 0 }));
   rows.sort((a, b) => b.pts - a.pts || b.pct - a.pct || b.g - a.g || byName(a, b));
   let pos = 0, prev = null;
   rows.forEach((r, i) => {
@@ -840,7 +841,7 @@ function flash(msg, kind) {
 const HINTS = {
   vota: "Dai da 1 a 5 stelle a ogni skill. Tocca di nuovo la stessa stella per togliere il voto. I tuoi voti li vedi solo tu.",
   formazioni: "Scegli la formazione che ti sembra più giusta. Puoi cambiare voto finché la votazione è aperta.",
-  classifica: "Ogni partita vinta vale 2 punti, ogni partita persa 1 punto.",
+  classifica: "Punti = presenze + vittorie. Ogni partita giocata vale 2 presenze, fino al massimo di partite giocate.",
   partita: "Scegli i convocati, genera le proposte, sistemale e pubblicale. Dopo la partita inserisci le formazioni definitive e la squadra vincitrice.",
   roster: "Aggiungi, rinomina o rimuovi giocatori.",
   utenti: "Persone che sono entrate nell'app con Google."
@@ -997,7 +998,7 @@ function rankingHTML() {
   const lastPlayed = Math.max(0, ...S.matches.filter(m => m.status === "played").map(m => m.playedAt || 0));
   const partite = `${played} partit${played === 1 ? "a" : "e"} giocat${played === 1 ? "a" : "e"}`;
   if (rows.some(r => r.pts > 0)) loadH2I().catch(() => { });
-  let h = `<p class="note">Punti = ${PTS_WIN} × vittorie + ${PTS_PLAYED} × partite giocate: una partita vinta vale 2 punti, una persa 1. Chi non ha ancora giocato ha 0 punti. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine da condividere compaiono i primi 18 giocatori con almeno un punto.</p>
+  let h = `<p class="note">Punti = presenze + vittorie. Ogni partita giocata vale 2 presenze, ma non si supera il numero massimo di partite giocate. Esempio: se il massimo è 10, chi ha giocato 4 partite ha 8 presenze, chi ne ha giocate 5 o più ne ha 10. A parità di punti conta la percentuale di vittorie, poi il numero di partite. Nell'immagine compaiono i primi 18.</p>
   <section class="rank-card has-shot" id="rank-card">
     ${rows.some(r => r.pts > 0) ? shotBtn("rank") : ""}
     <div class="rank-head"><h2>Classifica</h2><span class="meta num">${partite}${lastPlayed ? ` · aggiornata al ${fmtDate(lastPlayed)}` : ""}</span></div>
